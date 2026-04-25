@@ -437,6 +437,23 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm no hard crash path on runtime fallback scenarios.
   - Report:
     - Include scenario matrix and resulting backend selected.
+  - Progress update (2026-04-25):
+    - Added fallback regression suite:
+      - `tests/test_vulkan_fallback_regressions.py`
+    - Covered scenarios:
+      - Missing Vulkan runtime:
+        - `select_backend(request_vulkan=True)` -> `cuda` when CUDA is available.
+        - `select_backend(request_vulkan=True)` -> `pytorch` when CUDA is unavailable.
+      - Missing required Vulkan extension:
+        - `_require_vulkan_ready(...)` emits actionable `RuntimeError` including fallback guidance.
+      - Invalid shader artifacts:
+        - `run_vulkan_smoke_checks()` reports shader artifact failure with rebuild hint and remains non-crashing (`single_pass_probe` remains blocked state).
+    - Scenario matrix (observed):
+      - missing runtime + CUDA available -> `cuda`
+      - missing runtime + CUDA unavailable -> `pytorch`
+      - missing extension + CUDA available -> `cuda`
+    - Hard-crash regression status:
+      - No hard crash observed; fallback behavior remains deterministic and actionable.
 
 ## Priority 2 - Performance bring-up
 - [ ] Add Vulkan benchmark script(s)
@@ -448,6 +465,43 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Verify benchmark script captures device metadata and backend path.
   - Report:
     - Include throughput/latency table and test configuration.
+  - Progress update (2026-04-25):
+    - Added benchmark script:
+      - `turboquant/benchmark_vulkan.py`
+    - Script behavior:
+      - Fixed-seed reproducible benchmark inputs (`torch.manual_seed(...)` per kernel case)
+      - Captures backend/device metadata:
+        - torch version
+        - active device
+        - CUDA availability + CUDA-kernel availability
+        - Vulkan strict/runtime availability
+        - Vulkan vendor/device/API fields from capability report
+      - Compares paths for key kernels:
+        - `qjl_quant`, `qjl_score`, `qjl_gqa_score`, `quantized_bmm`
+        - Paths: `vulkan-reference`, `pytorch`/`pytorch-naive`, and `cuda` (blocked marker if unavailable)
+      - Emits latency and throughput table for each op.
+    - Validation command executed:
+      - `python -m turboquant.benchmark_vulkan --quick --dtype fp16`
+    - Validation outcome:
+      - Script executes successfully on this host and prints metadata + benchmark tables.
+      - Backend-path visibility is explicit (`cuda` shown as blocked when kernels unavailable).
+    - Measured summary (`--quick`, CPU host):
+      - `qjl_quant`:
+        - vulkan-reference: `0.1638 ms` (`6103.52 ops/s`)
+        - pytorch: `0.1329 ms` (`7524.45 ops/s`)
+        - cuda: blocked
+      - `qjl_score`:
+        - vulkan-reference: `0.2237 ms` (`4469.87 ops/s`)
+        - pytorch-naive: `0.1599 ms` (`6255.47 ops/s`)
+        - cuda: blocked
+      - `qjl_gqa_score`:
+        - vulkan-reference: `0.1908 ms` (`5239.99 ops/s`)
+        - pytorch-naive: `0.1859 ms` (`5378.66 ops/s`)
+        - cuda: blocked
+      - `quantized_bmm`:
+        - vulkan-reference: `0.1767 ms` (`5659.31 ops/s`)
+        - pytorch-naive: `37.3254 ms` (`26.79 ops/s`)
+        - cuda: blocked
 - [ ] Establish acceptance thresholds
   - Functional parity before optimization
   - Initial perf target: within practical range of current CUDA path on equivalent workload
