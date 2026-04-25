@@ -21,6 +21,32 @@ _REQUIRED_EXTENSIONS = {
 _REQUIRED_FEATURES = {
     "computeShader": True,
 }
+_VENDOR_ID_MAP = {
+    0x8086: "intel",
+    0x10DE: "nvidia",
+    0x1002: "amd",
+    0x1022: "amd",
+}
+_OPTIONAL_FAST_PATH_RULES = {
+    "intel_integer_dot": {
+        "vendors": {"intel"},
+        "extensions": {"VK_KHR_shader_integer_dot_product"},
+        "features": {"shaderIntegerDotProduct": True},
+        "compile_features": {"GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT": True},
+    },
+    "nvidia_coopmat2": {
+        "vendors": {"nvidia"},
+        "extensions": {"VK_NV_cooperative_matrix2"},
+        "features": {},
+        "compile_features": {"GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT": True},
+    },
+    "amd_coopmat": {
+        "vendors": {"amd"},
+        "extensions": {"VK_KHR_cooperative_matrix"},
+        "features": {},
+        "compile_features": {"GGML_VULKAN_COOPMAT_GLSLC_SUPPORT": True},
+    },
+}
 
 try:
     import importlib
@@ -61,11 +87,71 @@ def _parse_version_tuple(value):
     return None
 
 
+def _parse_vendor_id(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, str):
+        txt = value.strip().lower()
+        if txt.startswith("0x"):
+            try:
+                return int(txt, 16)
+            except Exception:
+                return None
+        if txt.isdigit():
+            return int(txt, 10)
+    return None
+
+
+def _infer_vendor_name(vendor_id, vendor_name_raw):
+    if isinstance(vendor_name_raw, str):
+        txt = vendor_name_raw.strip().lower()
+        if "intel" in txt:
+            return "intel"
+        if "nvidia" in txt:
+            return "nvidia"
+        if "amd" in txt or "advanced micro devices" in txt or "ati" in txt:
+            return "amd"
+    if vendor_id in _VENDOR_ID_MAP:
+        return _VENDOR_ID_MAP[vendor_id]
+    return "unknown"
+
+
+def _evaluate_optional_fast_paths(vendor_name, extensions, features, compile_features):
+    enabled = {}
+    disabled_reasons = {}
+    ext_set = set(extensions or [])
+    feature_map = dict(features or {})
+    compile_map = dict(compile_features or {})
+
+    for path_name, rules in _OPTIONAL_FAST_PATH_RULES.items():
+        reasons = []
+        if vendor_name not in set(rules.get("vendors", set())):
+            reasons.append(f"vendor '{vendor_name}' not supported")
+        for ext in sorted(set(rules.get("extensions", set()))):
+            if ext not in ext_set:
+                reasons.append(f"missing extension {ext}")
+        for feat, required in dict(rules.get("features", {})).items():
+            if bool(feature_map.get(feat, False)) != bool(required):
+                reasons.append(f"missing feature {feat}")
+        for cfeat, required in dict(rules.get("compile_features", {})).items():
+            if bool(compile_map.get(cfeat, False)) != bool(required):
+                reasons.append(f"compile feature {cfeat} is not enabled")
+        enabled[path_name] = len(reasons) == 0
+        if reasons:
+            disabled_reasons[path_name] = reasons
+    return enabled, disabled_reasons
+
+
 def _collect_vulkan_capabilities():
     caps = {
         "runtime_available": False,
         "runtime_info_raw": "",
         "api_version": None,
+        "vendor_id": None,
+        "vendor_name": None,
+        "device_name": None,
         "extensions": [],
         "features": {},
         "compile_features": {},
@@ -96,6 +182,17 @@ def _collect_vulkan_capabilities():
             parsed_runtime = {}
 
     caps["api_version"] = parsed_runtime.get("api_version") or parsed_runtime.get("vulkan_version")
+    caps["vendor_id"] = (
+        parsed_runtime.get("vendor_id")
+        or parsed_runtime.get("pci_vendor_id")
+        or parsed_runtime.get("vendorID")
+    )
+    caps["vendor_name"] = (
+        parsed_runtime.get("vendor_name")
+        or parsed_runtime.get("vendor")
+        or parsed_runtime.get("vendor_string")
+    )
+    caps["device_name"] = parsed_runtime.get("device_name") or parsed_runtime.get("device")
     caps["extensions"] = list(parsed_runtime.get("extensions") or [])
     caps["features"] = dict(parsed_runtime.get("features") or {})
 
@@ -137,12 +234,25 @@ def _evaluate_vulkan_capabilities(caps):
     }
     strict_ok = all(checklist.values())
 
+    vendor_id_parsed = _parse_vendor_id(caps.get("vendor_id"))
+    vendor_name = _infer_vendor_name(vendor_id_parsed, caps.get("vendor_name"))
+    fast_paths, fast_path_disabled_reasons = _evaluate_optional_fast_paths(
+        vendor_name,
+        exts,
+        features,
+        caps.get("compile_features", {}),
+    )
+
     out = dict(caps)
     out["api_version_parsed"] = api_parsed
+    out["vendor_id_parsed"] = vendor_id_parsed
+    out["vendor_name_normalized"] = vendor_name
     out["missing_extensions"] = missing_extensions
     out["missing_features"] = missing_features
     out["checklist"] = checklist
     out["strictly_available"] = strict_ok
+    out["optional_fast_paths"] = fast_paths
+    out["optional_fast_paths_disabled_reasons"] = fast_path_disabled_reasons
     return out
 
 

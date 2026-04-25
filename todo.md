@@ -335,6 +335,27 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate that unsafe/unsupported fast paths are disabled gracefully.
   - Report:
     - Include vendor matrix and enabled feature paths.
+  - Progress update (2026-04-25):
+    - Implemented vendor-aware guardrails in `turboquant/vulkan_backend.py`:
+      - Added vendor ID detection and normalization:
+        - Intel (`0x8086`), NVIDIA (`0x10DE`), AMD (`0x1002`/`0x1022`)
+        - Vendor inference from both PCI vendor IDs and vendor-name strings.
+      - Added optional fast-path gating model (`optional_fast_paths`) with explicit disable reasons:
+        - `intel_integer_dot`: requires Intel vendor + `VK_KHR_shader_integer_dot_product` + `shaderIntegerDotProduct` + compile probe `GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT`.
+        - `nvidia_coopmat2`: requires NVIDIA vendor + `VK_NV_cooperative_matrix2` + compile probe `GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT`.
+        - `amd_coopmat`: requires AMD vendor + `VK_KHR_cooperative_matrix` + compile probe `GGML_VULKAN_COOPMAT_GLSLC_SUPPORT`.
+      - Capability report now includes:
+        - `vendor_id_parsed`, `vendor_name_normalized`
+        - `optional_fast_paths`
+        - `optional_fast_paths_disabled_reasons`
+    - Added mocked vendor guardrail tests:
+      - `tests/test_vulkan_vendor_guardrails.py`
+      - Covers vendor detection and guardrail enable/disable behavior for Intel/NVIDIA/AMD/unknown vendor cases.
+    - Vendor matrix (observed in mocked validation):
+      - Intel + integer-dot support -> `intel_integer_dot` enabled
+      - NVIDIA missing `VK_NV_cooperative_matrix2` -> `nvidia_coopmat2` disabled (graceful reason emitted)
+      - AMD + cooperative-matrix support -> `amd_coopmat` enabled
+      - Unknown vendor -> all optional fast paths disabled
 
 ## Priority 2 - Correctness and test coverage
 - [ ] Add unit tests for Vulkan/CUDA/PyTorch numerical parity
