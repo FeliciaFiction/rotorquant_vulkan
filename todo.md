@@ -679,7 +679,7 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
   - Validation status:
     - README content and commands are aligned with current code paths on this host.
     - Clean-environment verification remains pending.
-- [ ] Update `requirements.txt` / optional extras if needed
+- [x] Update `requirements.txt` / optional extras if needed
   - Keep base install lightweight
   - Put Vulkan-related Python deps behind extras where possible
   - Tests:
@@ -688,6 +688,31 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm no unnecessary dependency added to base path.
   - Report:
     - Include dependency diff and install success matrix.
+  - Progress update (2026-04-25):
+    - Updated dependency split:
+      - `requirements.txt` now includes base runtime deps only:
+        - `torch>=2.0.0`
+        - `scipy>=1.10.0`
+      - Added `requirements-validate.txt` for validation/tooling deps:
+        - `transformers>=4.40.0`
+        - `accelerate>=0.25.0`
+        - `bitsandbytes>=0.43.0`
+      - `setup.py` remains source of truth for optional extras:
+        - `extras_require['validate']` matches `requirements-validate.txt` entries.
+    - Dependency diff:
+      - Removed from base `requirements.txt`:
+        - `transformers>=4.40.0`
+        - `accelerate>=0.25.0`
+        - `bitsandbytes>=0.43.0`
+      - Added:
+        - new file `requirements-validate.txt`
+    - Install success matrix (this host):
+      - `python -m pip install -e C:\\Git\\rotorquant` -> pass
+      - `python -m pip install -e "C:\\Git\\rotorquant[validate]"` -> pass
+      - `python -m pip install -e C:\\Git\\rotorquant --no-deps` -> pass
+      - `python -m pip install -e "C:\\Git\\rotorquant[validate]" --no-deps` -> pass
+    - Base path validation:
+      - No unnecessary validation-only dependency remains in base `requirements.txt`.
 - [ ] Add CI for Vulkan build sanity
   - At minimum: compile-time checks
   - Optional: runtime tests on GPU runner when available
