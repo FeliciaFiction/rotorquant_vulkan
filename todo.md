@@ -406,6 +406,27 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm diagnostics are actionable when smoke tests fail.
   - Report:
     - Include smoke output logs and pass/fail summary.
+  - Progress update (2026-04-25):
+    - Added Vulkan smoke-check utility in `turboquant/vulkan_backend.py`:
+      - `run_vulkan_smoke_checks()`
+      - Smoke sections:
+        - extension load
+        - device discovery
+        - shader source/SPIR-V artifact presence
+        - single-pass inference probe entry
+      - Added actionable diagnostics for blocked/failed states (including explicit fallback guidance and shader rebuild hint).
+    - Added smoke test target:
+      - `tests/test_vulkan_backend_smoke.py`
+      - Validates report structure, extension-missing diagnostics, and blocked single-pass behavior when runtime dispatch is not wired.
+    - Smoke output summary (this host):
+      - extension load: pass
+      - device discovery: fail (`runtime_available=False` in scaffold runtime)
+      - shader artifacts: pass
+      - single-pass probe: blocked (capability gate/runtime dispatch not ready)
+      - overall: fail (expected in scaffold environment)
+  - Validation status:
+    - Smoke diagnostics are actionable (pass)
+    - Vulkan-capable runtime execution still blocked by scaffold runtime probe on this host.
 - [ ] Add regression tests for fallback behavior
   - Missing Vulkan runtime
   - Missing extensions

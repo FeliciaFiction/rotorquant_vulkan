@@ -9,6 +9,7 @@ runtime execution paths in follow-up tasks.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import torch
 
 _VULKAN_EXT_AVAILABLE = False
@@ -47,6 +48,13 @@ _OPTIONAL_FAST_PATH_RULES = {
         "compile_features": {"GGML_VULKAN_COOPMAT_GLSLC_SUPPORT": True},
     },
 }
+_SHADER_SOURCES = [
+    "qjl_quant.comp",
+    "qjl_score.comp",
+    "qjl_gqa_score.comp",
+    "quantized_bmm.comp",
+]
+_SPV_ARTIFACTS = [f"{name}.spv" for name in _SHADER_SOURCES]
 
 try:
     import importlib
@@ -258,6 +266,116 @@ def _evaluate_vulkan_capabilities(caps):
 
 def get_vulkan_capability_report():
     return _evaluate_vulkan_capabilities(_collect_vulkan_capabilities())
+
+
+def _shader_status_report():
+    shader_root = Path(__file__).resolve().parent / "vulkan" / "shaders"
+    spv_root = shader_root / "spv"
+    found_sources = [name for name in _SHADER_SOURCES if (shader_root / name).exists()]
+    missing_sources = [name for name in _SHADER_SOURCES if (shader_root / name).exists() is False]
+    found_spv = [name for name in _SPV_ARTIFACTS if (spv_root / name).exists()]
+    missing_spv = [name for name in _SPV_ARTIFACTS if (spv_root / name).exists() is False]
+    ok = len(missing_sources) == 0 and len(missing_spv) == 0
+    detail = (
+        "all required shader sources and SPIR-V artifacts are present"
+        if ok
+        else "missing shader sources or SPIR-V artifacts; rerun `python setup.py --vulkan build_ext --inplace`"
+    )
+    return {
+        "ok": ok,
+        "shader_dir": str(shader_root),
+        "spv_dir": str(spv_root),
+        "found_sources": found_sources,
+        "missing_sources": missing_sources,
+        "found_spv": found_spv,
+        "missing_spv": missing_spv,
+        "detail": detail,
+    }
+
+
+def _single_pass_probe(capability_report):
+    if not capability_report.get("strictly_available", False):
+        return {
+            "ok": False,
+            "status": "blocked",
+            "detail": "Vulkan capability checks did not pass; probe skipped. Use CUDA/PyTorch fallback.",
+        }
+
+    key_states = torch.zeros(1, 1, 1, 1, 8, dtype=torch.float16)
+    outlier_indices = torch.zeros(1, 1, 1, 1, dtype=torch.int64)
+    rand_prj = torch.zeros(8, 8, dtype=torch.float16)
+    try:
+        _ = qjl_quant(key_states, outlier_indices, rand_prj, 8)
+    except NotImplementedError as e:
+        return {
+            "ok": False,
+            "status": "blocked",
+            "detail": (
+                f"single-pass probe reached Vulkan wrapper but runtime dispatch is not wired yet ({e}). "
+                "This is expected in scaffold phase."
+            ),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": "failed",
+            "detail": f"single-pass probe failed unexpectedly: {e}",
+        }
+    return {
+        "ok": True,
+        "status": "passed",
+        "detail": "single-pass probe executed successfully",
+    }
+
+
+def run_vulkan_smoke_checks():
+    """
+    Smoke checks for Vulkan backend bring-up.
+
+    Includes:
+    - extension load/runtime capability discovery
+    - shader source/SPIR-V artifact presence
+    - single-pass inference probe entrypoint
+    """
+    extension_load = {
+        "ok": bool(_VULKAN_EXT_AVAILABLE),
+        "detail": (
+            "vulkan extension import succeeded"
+            if _VULKAN_EXT_AVAILABLE
+            else f"vulkan extension import failed ({_VULKAN_LOAD_ERROR})"
+        ),
+    }
+    capability = get_vulkan_capability_report() if _VULKAN_EXT_AVAILABLE else {
+        "strictly_available": False,
+        "checklist": {"runtime_available": False},
+        "detail": "capability report unavailable because extension is not loaded",
+    }
+    device_discovery = {
+        "ok": bool(capability.get("checklist", {}).get("runtime_available", False)),
+        "vendor": capability.get("vendor_name_normalized", "unknown"),
+        "device_name": capability.get("device_name"),
+        "detail": (
+            "vulkan runtime reported available device"
+            if capability.get("checklist", {}).get("runtime_available", False)
+            else "vulkan runtime unavailable; ensure driver/runtime installation or use fallback backend"
+        ),
+    }
+    shader_status = _shader_status_report()
+    probe = _single_pass_probe(capability)
+    overall_ok = all([
+        extension_load["ok"],
+        device_discovery["ok"],
+        shader_status["ok"],
+        probe["ok"],
+    ])
+    return {
+        "overall_ok": overall_ok,
+        "extension_load": extension_load,
+        "device_discovery": device_discovery,
+        "shader_artifacts": shader_status,
+        "single_pass_probe": probe,
+        "capability_report": capability,
+    }
 
 
 def _format_capability_failure(report):
