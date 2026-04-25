@@ -148,10 +148,17 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - `tests/test_vulkan_qjl_quant_reference.py`
       - `float32` parity vs existing PyTorch quantization path: pass
       - `float16` parity vs existing PyTorch quantization path: pass
+    - Wired `qjl_quant` wrapper dispatch in `turboquant/vulkan_backend.py`:
+      - Calls native extension symbol when present (`qjl_quant_*` variants).
+      - Uses validated scaffold fallback (`qjl_quant_reference`) when extension symbol is not yet available.
+    - Added dispatch-path tests:
+      - `tests/test_vulkan_qjl_quant_dispatch.py`
+      - extension-symbol path selection: pass
+      - scaffold fallback output parity vs reference op: pass
     - Shader compile validation through build pipeline: pass
   - Remaining before close:
     - CUDA parity comparison is blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
-    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles, but dispatch integration comes in subsequent tasks).
+    - Native Vulkan extension kernel entrypoints for `qjl_quant` (`qjl_quant_*`) are still pending in `turboquant/vulkan/vulkan_backend.cpp` (scaffold fallback currently used when symbols are absent).
 - [ ] Port `turboquant/csrc/qjl_score_kernel.cu` to Vulkan compute
   - Tests:
     - Unit parity tests vs CUDA output across representative sequence lengths.
@@ -168,10 +175,17 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - `tests/test_vulkan_qjl_score_reference.py`
       - float32 case (`N=4`) parity vs naive reference: pass
       - float16 case (`N=3`) parity vs naive reference: pass
+    - Wired `qjl_score` wrapper dispatch in `turboquant/vulkan_backend.py`:
+      - Calls native extension symbol when present (`qjl_score_vulkan_*` variants).
+      - Uses validated scaffold fallback (`qjl_score_reference`) when extension symbol is not yet available.
+    - Added dispatch-path tests:
+      - `tests/test_vulkan_qjl_score_dispatch.py`
+      - extension-symbol path selection: pass
+      - scaffold fallback output parity vs reference op: pass
     - Shader compile validation through build pipeline: pass
   - Remaining before close:
     - CUDA parity comparison is blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
-    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles, but dispatch integration comes in subsequent tasks).
+    - Native Vulkan extension kernel entrypoints for `qjl_score` (`qjl_score_vulkan_*`) are still pending in `turboquant/vulkan/vulkan_backend.cpp` (scaffold fallback currently used when symbols are absent).
 - [ ] Port `turboquant/csrc/qjl_gqa_score_kernel.cu` to Vulkan compute
   - Tests:
     - GQA-specific parity tests with multiple head/group configurations.

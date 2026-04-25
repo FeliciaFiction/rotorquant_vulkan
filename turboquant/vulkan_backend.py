@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 import torch
 
+from .vulkan.reference_ops import qjl_quant_reference, qjl_score_reference
+
 _VULKAN_EXT_AVAILABLE = False
 _VULKAN_LOAD_ERROR = ""
 _vulkan_ext = None
@@ -439,8 +441,23 @@ def qjl_quant(key_states, outlier_indices, rand_prj, outlier_sketch_dim):
         raise TypeError(f"Unsupported dtypes: key={key_dtype}, proj={rand_dtype}")
 
     _require_vulkan_ready("qjl_quant")
-    raise NotImplementedError(
-        f"Vulkan kernel dispatch for qjl_quant ({fn_name}) is not wired yet."
+
+    if _VULKAN_EXT_AVAILABLE and hasattr(_vulkan_ext, fn_name):
+        return getattr(_vulkan_ext, fn_name)(
+            key_states,
+            outlier_indices,
+            rand_prj,
+            outlier_sketch_dim,
+        )
+
+    # Scaffold execution path: while native Vulkan qjl_quant entrypoints are
+    # being brought up in the extension, execute the validated parity
+    # reference op to keep end-to-end API behavior testable.
+    return qjl_quant_reference(
+        key_states,
+        outlier_indices,
+        rand_prj,
+        outlier_sketch_dim,
     )
 
 
@@ -469,8 +486,31 @@ def qjl_score(
         raise TypeError(f"Unsupported dtypes: query={query_dtype}, proj={rand_dtype}")
 
     _require_vulkan_ready("qjl_score")
-    raise NotImplementedError(
-        f"Vulkan kernel dispatch for qjl_score ({fn_name}) is not wired yet."
+
+    if _VULKAN_EXT_AVAILABLE and hasattr(_vulkan_ext, fn_name):
+        return getattr(_vulkan_ext, fn_name)(
+            key_quant,
+            key_outlier_quant,
+            key_norm,
+            key_outlier_norm,
+            outlier_indices,
+            query_sketch,
+            query_states,
+            rand_prj,
+        )
+
+    # Scaffold execution path: while native Vulkan qjl_score entrypoints are
+    # being brought up in the extension, execute the validated parity
+    # reference op to keep end-to-end API behavior testable.
+    return qjl_score_reference(
+        key_quant,
+        key_outlier_quant,
+        key_norm,
+        key_outlier_norm,
+        outlier_indices,
+        query_sketch,
+        query_states,
+        rand_prj,
     )
 
 
