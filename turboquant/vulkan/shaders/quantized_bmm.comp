@@ -1,0 +1,78 @@
+#version 450
+
+// First-pass Vulkan parity scaffold for quantized_bmm path from quantization.cu.
+// Notes:
+// - This is a minimal functional port for dequantized accumulate semantics.
+// - Packed weights are uint32 with output-channel packing along bit lanes.
+// - Runtime dispatch/wiring remains a follow-up task.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer Inputs {
+    float fA[];
+};
+
+layout(std430, binding = 1) readonly buffer PackedWeights {
+    uint qB[];
+};
+
+layout(std430, binding = 2) readonly buffer Scales {
+    float scales[];
+};
+
+layout(std430, binding = 3) readonly buffer Zeros {
+    float zeros[];
+};
+
+layout(std430, binding = 4) writeonly buffer Outputs {
+    float out_vals[];
+};
+
+layout(push_constant) uniform QuantizedBmmParams {
+    uint total_rows;       // batch_heads * M
+    uint batch_heads;
+    uint nh;
+    uint m_dim;            // M
+    uint k_dim;            // K
+    uint n_dim;            // N
+    uint n_packed;         // N / pack_factor
+    uint n_groups;         // N / group_size
+    uint group_size;
+    uint bits;             // 2 or 4
+    uint mqa;              // 0/1
+} params;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= params.total_rows) {
+        return;
+    }
+
+    uint bh = idx / params.m_dim;
+    uint m = idx % params.m_dim;
+    uint wb = (params.mqa == 0u) ? bh : (bh / max(params.nh, 1u));
+
+    uint pack_factor = 32u / params.bits;
+    uint mask = (1u << params.bits) - 1u;
+    uint fA_base = (bh * params.m_dim + m) * params.k_dim;
+    uint qB_base = wb * params.n_packed * params.k_dim;
+    uint sz_base = wb * params.n_groups * params.k_dim;
+    uint out_base = (bh * params.m_dim + m) * params.n_dim;
+
+    for (uint oc = 0u; oc < params.n_dim; ++oc) {
+        uint packed_idx = oc / pack_factor;
+        uint bit_shift = (oc % pack_factor) * params.bits;
+        uint group_idx = oc / params.group_size;
+        float acc = 0.0;
+
+        for (uint ic = 0u; ic < params.k_dim; ++ic) {
+            uint w = qB[qB_base + packed_idx * params.k_dim + ic];
+            float qv = float((w >> bit_shift) & mask);
+            float s = scales[sz_base + group_idx * params.k_dim + ic];
+            float z = zeros[sz_base + group_idx * params.k_dim + ic];
+            float deq = s * qv + z;
+            acc += fA[fA_base + ic] * deq;
+        }
+        out_vals[out_base + oc] = acc;
+    }
+}

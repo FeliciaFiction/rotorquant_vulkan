@@ -148,6 +148,7 @@ if build_vulkan:
                     SHADER_DIR / "qjl_quant.comp",
                     SHADER_DIR / "qjl_score.comp",
                     SHADER_DIR / "qjl_gqa_score.comp",
+                    SHADER_DIR / "quantized_bmm.comp",
                 ]
                 for source in shader_sources:
                     _compile_shader(glslc, source, SPV_DIR / f"{source.name}.spv")

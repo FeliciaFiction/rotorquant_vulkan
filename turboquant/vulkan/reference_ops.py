@@ -238,3 +238,104 @@ def qjl_gqa_score_reference(
 
     scores = scl * norm_k * k_inner + scl_o * norm_o * out_inner
     return scores.reshape(b, qh, n * g, 1).contiguous()
+
+
+def _dequantize_packed_weights_reference(
+    q_packed: torch.Tensor,
+    scales: torch.Tensor,
+    zeros: torch.Tensor,
+    bits: int,
+    group_size: int,
+) -> torch.Tensor:
+    """
+    Dequantize one packed weight matrix.
+
+    Shapes:
+      q_packed: [N_packed, K] int/uint
+      scales:   [N/group_size, K] fp
+      zeros:    [N/group_size, K] fp
+    Returns:
+      w: [N, K] fp32
+    """
+    if bits not in (2, 4):
+        raise ValueError("bits must be one of {2, 4}")
+    if group_size <= 0:
+        raise ValueError("group_size must be positive")
+
+    pack_factor = 32 // bits
+    n_packed, k = q_packed.shape
+    n = n_packed * pack_factor
+    if n % group_size != 0:
+        raise ValueError("N must be divisible by group_size")
+
+    groups = n // group_size
+    if scales.shape != (groups, k) or zeros.shape != (groups, k):
+        raise ValueError("scales/zeros shape mismatch for packed matrix")
+
+    oc = torch.arange(n, device=q_packed.device, dtype=torch.long)
+    packed_idx = oc // pack_factor
+    shift = (oc % pack_factor) * bits
+    group_idx = oc // group_size
+
+    words = q_packed.to(torch.int64)[packed_idx]  # [N, K]
+    qvals = ((words >> shift[:, None]) & ((1 << bits) - 1)).to(torch.float32)
+    w = qvals * scales.to(torch.float32)[group_idx] + zeros.to(torch.float32)[group_idx]
+    return w.contiguous()
+
+
+def quantized_bmm_reference(
+    group_size: int,
+    fA: torch.Tensor,
+    qB: torch.Tensor,
+    scales: torch.Tensor,
+    zeros: torch.Tensor,
+    bits: int,
+    mqa: bool = False,
+) -> torch.Tensor:
+    """
+    Reference implementation of cuda_backend.quantized_bmm behavior.
+
+    Shapes:
+      fA:     [B, H, M, K]
+      qB:     [B, H_or_1, K, N_packed]
+      scales: [B, H_or_1, K, N/group_size]
+      zeros:  [B, H_or_1, K, N/group_size]
+    Returns:
+      out:    [B, H, M, N]
+    """
+    if fA.dim() != 4 or qB.dim() != 4:
+        raise ValueError("fA and qB must be 4D")
+    if bits not in (2, 4):
+        raise ValueError("bits must be one of {2, 4}")
+
+    b, h, m, k = fA.shape
+    feat_per_int = 32 // bits
+    n = qB.shape[-1] * feat_per_int
+
+    fA2 = fA.view(-1, m, k).contiguous()
+    qB2 = qB.reshape(-1, k, qB.shape[-1]).transpose(1, 2).contiguous()
+
+    flatten_b = b * h if not mqa else b
+    scales2 = scales.view(flatten_b, scales.shape[-2], scales.shape[-1]).transpose(1, 2).contiguous()
+    zeros2 = zeros.view(flatten_b, zeros.shape[-2], zeros.shape[-1]).transpose(1, 2).contiguous()
+
+    if qB2.shape[0] != flatten_b:
+        raise ValueError("qB flattened batch does not match expected backend layout")
+    if scales2.shape[0] != flatten_b or zeros2.shape[0] != flatten_b:
+        raise ValueError("scales/zeros flattened batch does not match expected backend layout")
+    if scales2.shape != zeros2.shape:
+        raise ValueError("scales and zeros shapes must match")
+
+    out = torch.empty((b * h, m, n), device=fA.device, dtype=fA.dtype)
+    for batch_idx in range(b * h):
+        w_batch = batch_idx if not mqa else (batch_idx // h)
+        w = _dequantize_packed_weights_reference(
+            qB2[w_batch],
+            scales2[w_batch],
+            zeros2[w_batch],
+            bits=bits,
+            group_size=group_size,
+        )
+        out[batch_idx] = torch.matmul(fA2[batch_idx].to(torch.float32), w.transpose(0, 1)).to(fA.dtype)
+
+    return out.view(b, h, m, n).contiguous()

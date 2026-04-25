@@ -10,6 +10,7 @@ set(SHADER_SOURCES
     qjl_quant.comp
     qjl_score.comp
     qjl_gqa_score.comp
+    quantized_bmm.comp
 )
 
 set(SPIRV_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/spv")
@@ -29,4 +30,3 @@ foreach(SHADER_FILE IN LISTS SHADER_SOURCES)
 endforeach()
 
 add_custom_target(compile_shaders ALL DEPENDS ${SPIRV_TARGETS})
-

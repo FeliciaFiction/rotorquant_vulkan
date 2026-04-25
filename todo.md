@@ -203,6 +203,28 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate output shape/layout compatibility with existing callers.
   - Report:
     - Include parity table and unsupported-case list (if any).
+  - Progress update (2026-04-25):
+    - Implemented first-pass Vulkan parity scaffold shader:
+      - `turboquant/vulkan/shaders/quantized_bmm.comp`
+      - Added to shader build lists in `setup.py` and `turboquant/vulkan/shaders/CMakeLists.txt`.
+    - Added CPU reference op for parity testing:
+      - `turboquant/vulkan/reference_ops.py::quantized_bmm_reference(...)`
+    - Added parity tests:
+      - `tests/test_vulkan_quantized_bmm_reference.py`
+      - Supported matrix (pass):
+        - bits=2, group_size=8 (non-MQA)
+        - bits=2, group_size=16 (non-MQA)
+        - bits=4, group_size=8 (non-MQA)
+        - bits=4, group_size=16 (non-MQA)
+      - MQA layout checks (pass):
+        - bits=2, group_size=8
+        - bits=4, group_size=8
+    - Unsupported-case list:
+      - bits outside `{2,4}` rejected by reference path.
+      - Cases where `N % group_size != 0` rejected by reference path.
+  - Remaining before close:
+    - CUDA kernel parity comparison remains blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
+    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles in scaffold, dispatch integration comes in subsequent tasks).
 - [ ] Add API-compatible Python wrapper `turboquant/vulkan_backend.py`
   - Mirror public functions in `turboquant/cuda_backend.py`:
     - `is_vulkan_available()`
