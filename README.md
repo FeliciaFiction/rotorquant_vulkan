@@ -127,6 +127,85 @@ pq = PlanarQuantMSE(d=128, bits=3, device='cuda')
 x_hat, indices = pq(x)
 ```
 
+### Python/Vulkan backend (experimental scaffold)
+
+The Vulkan backend in this repository is currently scaffolded for feature
+bring-up and parity testing. It includes:
+
+- Vulkan shader build/probe flow (`glslc` feature probes + `.spv` generation)
+- Strict capability checks (`Vulkan >= 1.3`, required feature/extension gates)
+- Deterministic backend selection with CUDA/PyTorch fallback behavior
+
+Runtime note: native Vulkan runtime/device probing and native Vulkan kernel
+entrypoints are still in progress in `turboquant/vulkan/vk_runtime.cpp` and
+`turboquant/vulkan/vulkan_backend.cpp`.
+
+#### Prerequisites
+
+- Python 3.10+
+- PyTorch (`torch>=2.0.0`)
+- `scipy` (required by `turboquant.cuda_backend` imports)
+- Vulkan SDK with `glslc` available:
+  - set `VULKAN_SDK` or ensure `glslc` is on `PATH`
+  - optional override: `TURBOQUANT_GLSLC=/abs/path/to/glslc`
+
+#### Build examples
+
+Use standard install for normal development (installs dependencies):
+
+```bash
+pip install -e .
+```
+
+Build Vulkan extension in editable mode:
+
+```bash
+pip install -e . --config-settings="--build-option=--vulkan"
+```
+
+Build CUDA + Vulkan together:
+
+```bash
+pip install -e . --config-settings="--build-option=--cuda" --config-settings="--build-option=--vulkan"
+```
+
+In-place extension build (useful during local backend iteration):
+
+```bash
+python setup.py build_ext --inplace --vulkan
+```
+
+Dependency guidance:
+
+- Prefer `pip install -e .` for regular setup so required dependencies (including
+  `scipy`) are installed.
+- Use `--no-deps` only for controlled CI/validation scenarios; imports may fail
+  if dependencies are missing.
+
+#### Runtime backend selection examples
+
+```python
+import turboquant as tq
+
+# Automatic policy: explicit override > requested Vulkan > CUDA > PyTorch
+backend, reason = tq.select_backend(request_vulkan=True)
+print(backend, reason)
+```
+
+```bash
+# Explicit override via env var
+set TURBOQUANT_BACKEND=vulkan  # Windows PowerShell: $env:TURBOQUANT_BACKEND='vulkan'
+python -c "import turboquant as tq; print(tq.select_backend())"
+```
+
+```python
+import turboquant.vulkan_backend as vk
+
+print("strictly available:", vk.is_vulkan_available())
+print(vk.get_vulkan_capability_report())
+print(vk.run_vulkan_smoke_checks())
+```
+
 ## How It Works
 
 Rotation decorrelates KV cache vectors before scalar quantization:

@@ -665,6 +665,20 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm docs match actual flags, file paths, and outputs.
   - Report:
     - Include doc command verification checklist.
+  - Progress update (2026-04-25):
+    - Updated `README.md` Vulkan section with:
+      - Vulkan prerequisites (`glslc`/SDK/toolchain expectations)
+      - Build examples for Vulkan-only and mixed CUDA+Vulkan builds
+      - Runtime backend selection examples (`select_backend`, capability/smoke checks)
+      - Dependency guidance clarifying normal `pip install -e .` vs `--no-deps` validation usage
+    - Doc command verification checklist (this host):
+      - `python C:\\Git\\rotorquant\\setup.py --name` -> pass (`turboquant`)
+      - `python C:\\Git\\rotorquant\\setup.py --vulkan --name` -> pass (`turboquant`)
+      - `python -c "import turboquant as tq; print(tq.select_backend(request_vulkan=True))"` -> pass (deterministic fallback tuple returned)
+      - `python -c "import turboquant.vulkan_backend as vk; ..."` (`is_vulkan_available`, capability report, smoke summary) -> pass (all return expected scaffold-state values)
+  - Validation status:
+    - README content and commands are aligned with current code paths on this host.
+    - Clean-environment verification remains pending.
 - [ ] Update `requirements.txt` / optional extras if needed
   - Keep base install lightweight
   - Put Vulkan-related Python deps behind extras where possible
