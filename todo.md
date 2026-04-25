@@ -307,7 +307,7 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - Valid call with Vulkan ready but extension symbol missing -> scaffold reference fallback is selected.
 
 ## Priority 1 - Runtime dispatch and safety
-- [ ] Add backend selection policy in Python package
+- [x] Add backend selection policy in Python package
   - Update `turboquant/__init__.py` exports to include Vulkan path
   - Keep deterministic fallback order:
     - Explicit backend override
@@ -340,6 +340,9 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - request_vulkan=False, vulkan=True, cuda=False -> `pytorch`
       - request_vulkan=False, vulkan=False, cuda=True -> `cuda`
       - request_vulkan=False, vulkan=False, cuda=False -> `pytorch`
+    - Re-validation (2026-04-25):
+      - `python -m pytest tests/test_backend_selection_policy.py tests/test_vulkan_fallback_regressions.py -q`
+      - Result: `17 passed`
 - [ ] Add strict capability checks
   - Vulkan 1.3 minimum
   - Required compute features/extensions
@@ -374,7 +377,13 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
   - Validation status:
     - Mocked capability tests: pass
     - Manual validation on a real Vulkan 1.3-capable runtime: blocked in current scaffold environment (native runtime probe still returns unavailable).
-- [ ] Add vendor-aware guardrails (copy llama.cpp pattern)
+  - Re-validation (2026-04-25):
+    - `python -m pytest tests/test_vulkan_capability_checks.py tests/test_vulkan_fallback_regressions.py -q` -> `11 passed`
+    - Live capability probe on this host:
+      - `strictly_available=False`
+      - checklist: `runtime_available=False`, `vulkan_1_3_minimum=False`, `required_extensions=False`, `required_features=False`
+      - observed missing strict requirements: `VK_KHR_storage_buffer_storage_class`, `computeShader`
+- [x] Add vendor-aware guardrails (copy llama.cpp pattern)
   - Detect Intel/AMD/NVIDIA vendor IDs
   - Gate optional fast paths by supported extensions
   - Tests:
@@ -404,9 +413,15 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - NVIDIA missing `VK_NV_cooperative_matrix2` -> `nvidia_coopmat2` disabled (graceful reason emitted)
       - AMD + cooperative-matrix support -> `amd_coopmat` enabled
       - Unknown vendor -> all optional fast paths disabled
+    - Re-validation (2026-04-25):
+      - `python -m pytest tests/test_vulkan_vendor_guardrails.py tests/test_vulkan_fallback_regressions.py -q` -> `11 passed`
+      - Live host probe confirms graceful disable behavior when capabilities are missing:
+        - vendor detected: `unknown`
+        - optional fast paths: all disabled (`intel_integer_dot`, `nvidia_coopmat2`, `amd_coopmat`)
+        - disable reasons emitted per path (vendor mismatch and missing extension/feature details)
 
 ## Priority 2 - Correctness and test coverage
-- [ ] Add unit tests for Vulkan/CUDA/PyTorch numerical parity
+- [x] Add unit tests for Vulkan/CUDA/PyTorch numerical parity
   - New tests under `tests/` for:
     - `qjl_quant`
     - `qjl_score`
@@ -444,6 +459,10 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - `qjl_score`: within configured matrix tolerance
       - `qjl_gqa_score`: within configured matrix tolerance
       - `quantized_bmm`: within configured matrix tolerance
+    - Re-validation (2026-04-25):
+      - `python -m pytest tests/test_vulkan_parity_matrix.py -q`
+      - Result: `11 passed, 10 skipped`
+      - Skip status: CUDA parity checks skipped on this host due unavailable CUDA kernels/runtime.
 - [ ] Add backend smoke tests
   - Device discovery
   - Shader compile/load
@@ -475,7 +494,15 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
   - Validation status:
     - Smoke diagnostics are actionable (pass)
     - Vulkan-capable runtime execution still blocked by scaffold runtime probe on this host.
-- [ ] Add regression tests for fallback behavior
+  - Re-validation (2026-04-25):
+    - `python -m pytest tests/test_vulkan_backend_smoke.py tests/test_vulkan_fallback_regressions.py -q` -> `8 passed`
+    - Live smoke report on this host:
+      - `overall_ok=false`
+      - `extension_load=true`
+      - `device_discovery=false`
+      - `shader_artifacts=true`
+      - `single_pass_probe_status=blocked`
+- [x] Add regression tests for fallback behavior
   - Missing Vulkan runtime
   - Missing extensions
   - Invalid shader artifacts
@@ -502,9 +529,12 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - missing extension + CUDA available -> `cuda`
     - Hard-crash regression status:
       - No hard crash observed; fallback behavior remains deterministic and actionable.
+    - Re-validation (2026-04-25):
+      - `python -m pytest tests/test_vulkan_fallback_regressions.py tests/test_backend_selection_policy.py tests/test_vulkan_backend_smoke.py -q`
+      - Result: `20 passed`
 
 ## Priority 2 - Performance bring-up
-- [ ] Add Vulkan benchmark script(s)
+- [x] Add Vulkan benchmark script(s)
   - Extend existing benchmark suite in `turboquant/benchmark_*.py`
   - Compare Vulkan vs CUDA vs PyTorch for key kernels
   - Tests:
@@ -550,6 +580,25 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
         - vulkan-reference: `0.1767 ms` (`5659.31 ops/s`)
         - pytorch-naive: `37.3254 ms` (`26.79 ops/s`)
         - cuda: blocked
+    - Re-validation (2026-04-25):
+      - `python -m turboquant.benchmark_vulkan --quick --dtype fp16` -> pass
+      - Updated measured summary (`--quick`, CPU host):
+        - `qjl_quant`:
+          - vulkan-reference: `0.1762 ms` (`5676.66 ops/s`)
+          - pytorch: `0.1243 ms` (`8042.46 ops/s`)
+          - cuda: blocked
+        - `qjl_score`:
+          - vulkan-reference: `0.1645 ms` (`6079.77 ops/s`)
+          - pytorch-naive: `0.1612 ms` (`6203.47 ops/s`)
+          - cuda: blocked
+        - `qjl_gqa_score`:
+          - vulkan-reference: `0.1976 ms` (`5061.24 ops/s`)
+          - pytorch-naive: `0.2581 ms` (`3875.07 ops/s`)
+          - cuda: blocked
+        - `quantized_bmm`:
+          - vulkan-reference: `0.1893 ms` (`5283.18 ops/s`)
+          - pytorch-naive: `50.8865 ms` (`19.65 ops/s`)
+          - cuda: blocked
 - [ ] Establish acceptance thresholds
   - Functional parity before optimization
   - Initial perf target: within practical range of current CUDA path on equivalent workload
@@ -581,6 +630,16 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - Overall threshold status: `blocked` (due missing CUDA comparison path)
   - Remaining validation:
     - Re-check threshold results on at least one Intel Arc Vulkan 1.3 environment.
+  - Re-validation (2026-04-25):
+    - `python -m pytest tests/test_vulkan_benchmark_thresholds.py -q` -> `3 passed`
+    - `python -m turboquant.benchmark_vulkan --quick --dtype fp16 --check-thresholds` -> pass (script runs; threshold report emitted)
+    - Updated threshold outcomes (`--quick`, this CPU host):
+      - `qjl_quant`: Vulkan/PyTorch ratio `1.287` (pass vs limit `2.0`)
+      - `qjl_score`: Vulkan/PyTorch ratio `0.992` (pass vs limit `2.0`)
+      - `qjl_gqa_score`: Vulkan/PyTorch ratio `1.002` (pass vs limit `2.0`)
+      - `quantized_bmm`: Vulkan/PyTorch ratio `0.005` (pass vs limit `2.0`)
+      - CUDA ratio checks: blocked (CUDA kernels unavailable on this host)
+      - Overall threshold status: `blocked` (due missing CUDA comparison path)
 - [ ] Profile and tune
   - Workgroup size tuning
   - Buffer reuse and descriptor caching
