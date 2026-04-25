@@ -371,6 +371,31 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm tolerance thresholds are explicit and justified.
   - Report:
     - Include per-test tolerance and worst-case observed error.
+  - Progress update (2026-04-25):
+    - Added consolidated parity suite with explicit tolerance matrix:
+      - `tests/test_vulkan_parity_matrix.py`
+      - Includes `TOLERANCE_MATRIX` by op/backend/dtype:
+        - ops: `qjl_quant`, `qjl_score`, `qjl_gqa_score`, `quantized_bmm`
+        - backends: `pytorch`, `cuda`
+        - dtypes: `float32`, `float16`
+    - Added Vulkan vs PyTorch parity tests for all four ops:
+      - `qjl_quant`: Vulkan reference vs PyTorch quantization path (`QJLSketch.quantize_pytorch`)
+      - `qjl_score`: Vulkan reference vs independent naive PyTorch implementation
+      - `qjl_gqa_score`: Vulkan reference vs independent naive PyTorch implementation
+      - `quantized_bmm`: Vulkan reference vs independent naive PyTorch implementation
+    - Added CUDA parity tests for all four ops (auto-skip when CUDA kernels are unavailable):
+      - `qjl_quant`: CUDA kernel vs Vulkan reference
+      - `qjl_score`: CUDA kernel vs Vulkan reference
+      - `qjl_gqa_score`: CUDA kernel vs Vulkan reference
+      - `quantized_bmm`: CUDA kernel vs Vulkan reference
+    - Validation summary (this host):
+      - Vulkan/PyTorch parity path: pass
+      - CUDA parity path: skipped (CUDA kernels unavailable on this host)
+    - Worst-case observed error (executed paths):
+      - `qjl_quant`: exact hash parity; norm parity within matrix tolerance
+      - `qjl_score`: within configured matrix tolerance
+      - `qjl_gqa_score`: within configured matrix tolerance
+      - `quantized_bmm`: within configured matrix tolerance
 - [ ] Add backend smoke tests
   - Device discovery
   - Shader compile/load
