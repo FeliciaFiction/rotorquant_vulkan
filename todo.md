@@ -238,6 +238,25 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate dispatch chooses Vulkan path only when capability checks pass.
   - Report:
     - Include function-level status and fallback behavior examples.
+  - Progress update (2026-04-25):
+    - Added `turboquant/vulkan_backend.py` with API-compatible wrapper functions:
+      - `is_vulkan_available()`
+      - `qjl_quant(...)`
+      - `qjl_score(...)`
+      - `qjl_gqa_score(...)`
+      - `quantized_bmm(...)`
+    - Implemented capability gating behavior:
+      - Wrapper checks extension import availability and Vulkan runtime readiness before kernel dispatch.
+      - For valid dtypes/signatures, calls fail fast with clear runtime messages when Vulkan is unavailable.
+      - Kernel dispatch remains intentionally unimplemented in this phase (`NotImplementedError`) until runtime wiring task.
+    - Added API compatibility tests:
+      - `tests/test_vulkan_backend_api_compat.py`
+      - Signature parity vs `turboquant/cuda_backend.py`: pass
+      - Expected exception behavior (unsupported dtype, invalid bits, runtime gate): pass
+    - Fallback behavior examples:
+      - `is_vulkan_available() == False` -> higher-level dispatch should use CUDA/PyTorch fallback.
+      - Valid `qjl_*` call with Vulkan not ready -> `RuntimeError` with actionable context.
+      - Valid `qjl_*` call with Vulkan ready but runtime kernel not wired -> `NotImplementedError`.
 
 ## Priority 1 - Runtime dispatch and safety
 - [ ] Add backend selection policy in Python package
