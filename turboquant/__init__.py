@@ -1,7 +1,10 @@
+import os
+
 from .turboquant import TurboQuantMSE, TurboQuantProd, TurboQuantKVCache
 from .lloyd_max import LloydMaxCodebook, solve_lloyd_max
 from .compressors import TurboQuantCompressorV2, TurboQuantCompressorMSE
 from .cuda_backend import is_cuda_available, QJLSketch, QJLKeyQuantizer
+from .vulkan_backend import is_vulkan_available
 from .isoquant import IsoQuantMSE, IsoQuantProd
 from .planarquant import PlanarQuantMSE, PlanarQuantProd
 from .rotorquant import RotorQuantMSE, RotorQuantProd, RotorQuantKVCache
@@ -15,6 +18,54 @@ from .clifford import geometric_product, make_random_rotor, rotor_sandwich
 # IsoQuant is the recommended default (5.8x faster, same quality)
 QuantMSE = IsoQuantMSE
 QuantProd = IsoQuantProd
+
+_VALID_BACKENDS = {"auto", "vulkan", "cuda", "pytorch"}
+
+
+def select_backend(backend: str | None = None, request_vulkan: bool = False):
+    """
+    Deterministic backend selection policy.
+
+    Order:
+      1) explicit backend override (function arg or TURBOQUANT_BACKEND)
+      2) Vulkan if requested and available
+      3) CUDA if available
+      4) PyTorch fallback
+
+    Returns:
+      (backend_name, reason_message)
+    """
+    env_override = os.environ.get("TURBOQUANT_BACKEND", "").strip().lower()
+    explicit = (backend or env_override or "").strip().lower()
+    if explicit:
+        if explicit not in _VALID_BACKENDS:
+            raise ValueError(
+                f"Unknown backend override '{explicit}'. "
+                f"Supported values: {sorted(_VALID_BACKENDS)}"
+            )
+        if explicit != "auto":
+            if explicit == "vulkan":
+                if is_vulkan_available():
+                    return "vulkan", "explicit override selected Vulkan backend"
+                raise RuntimeError("Explicit backend override requested Vulkan, but Vulkan is unavailable")
+            if explicit == "cuda":
+                if is_cuda_available():
+                    return "cuda", "explicit override selected CUDA backend"
+                raise RuntimeError("Explicit backend override requested CUDA, but CUDA is unavailable")
+            return "pytorch", "explicit override selected PyTorch backend"
+
+    if request_vulkan:
+        if is_vulkan_available():
+            return "vulkan", "Vulkan requested and available"
+
+    if is_cuda_available():
+        if request_vulkan:
+            return "cuda", "Vulkan requested but unavailable; falling back to CUDA"
+        return "cuda", "CUDA available"
+
+    if request_vulkan:
+        return "pytorch", "Vulkan requested but unavailable; CUDA unavailable; falling back to PyTorch"
+    return "pytorch", "CUDA unavailable; using PyTorch fallback"
 
 # Triton kernels (optional, requires triton >= 3.0 and an active GPU driver)
 try:

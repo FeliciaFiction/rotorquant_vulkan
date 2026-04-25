@@ -272,6 +272,26 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate deterministic backend choice and clear logging/messages.
   - Report:
     - Include dispatch truth table and observed runtime path per case.
+  - Progress update (2026-04-25):
+    - Added Vulkan-aware backend selection policy in `turboquant/__init__.py`:
+      - Imported/exported `is_vulkan_available` at package level.
+      - Added `select_backend(backend: str | None = None, request_vulkan: bool = False)` with deterministic order:
+        1) explicit override (`backend` arg or `TURBOQUANT_BACKEND`)
+        2) Vulkan if requested and available
+        3) CUDA if available
+        4) PyTorch fallback
+      - Added clear reason strings for chosen path and explicit errors for invalid/unavailable explicit overrides.
+    - Added parametrized dispatch tests:
+      - `tests/test_backend_selection_policy.py`
+      - Covers backend availability combinations, explicit override behavior, invalid override handling, and reason messages.
+    - Dispatch truth table (observed):
+      - request_vulkan=True, vulkan=True, cuda=True -> `vulkan`
+      - request_vulkan=True, vulkan=False, cuda=True -> `cuda`
+      - request_vulkan=True, vulkan=False, cuda=False -> `pytorch`
+      - request_vulkan=False, vulkan=True, cuda=True -> `cuda`
+      - request_vulkan=False, vulkan=True, cuda=False -> `pytorch`
+      - request_vulkan=False, vulkan=False, cuda=True -> `cuda`
+      - request_vulkan=False, vulkan=False, cuda=False -> `pytorch`
 - [ ] Add strict capability checks
   - Vulkan 1.3 minimum
   - Required compute features/extensions
