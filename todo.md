@@ -240,13 +240,20 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - MQA layout checks (pass):
         - bits=2, group_size=8
         - bits=4, group_size=8
+    - Wired `quantized_bmm` wrapper dispatch in `turboquant/vulkan_backend.py`:
+      - Calls native extension symbol when present (`quantized_bmm_vulkan_*` variants).
+      - Uses validated scaffold fallback (`quantized_bmm_reference`) when extension symbol is not yet available.
+    - Added dispatch-path tests:
+      - `tests/test_vulkan_quantized_bmm_dispatch.py`
+      - extension-symbol path selection: pass
+      - scaffold fallback output parity vs reference op: pass
     - Unsupported-case list:
       - bits outside `{2,4}` rejected by reference path.
       - Cases where `N % group_size != 0` rejected by reference path.
   - Remaining before close:
     - CUDA kernel parity comparison remains blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
-    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles in scaffold, dispatch integration comes in subsequent tasks).
-- [ ] Add API-compatible Python wrapper `turboquant/vulkan_backend.py`
+    - Native Vulkan extension kernel entrypoints for `quantized_bmm` (`quantized_bmm_vulkan_*`) are still pending in `turboquant/vulkan/vulkan_backend.cpp` (scaffold fallback currently used when symbols are absent).
+- [x] Add API-compatible Python wrapper `turboquant/vulkan_backend.py`
   - Mirror public functions in `turboquant/cuda_backend.py`:
     - `is_vulkan_available()`
     - `qjl_quant(...)`
@@ -269,15 +276,35 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Implemented capability gating behavior:
       - Wrapper checks extension import availability and Vulkan runtime readiness before kernel dispatch.
       - For valid dtypes/signatures, calls fail fast with clear runtime messages when Vulkan is unavailable.
-      - Kernel dispatch remains intentionally unimplemented in this phase (`NotImplementedError`) until runtime wiring task.
+      - Runtime dispatch now wired for all four kernel-facing wrappers:
+        - `qjl_quant(...)`: extension-first, scaffold fallback to `qjl_quant_reference(...)` when symbol missing
+        - `qjl_score(...)`: extension-first, scaffold fallback to `qjl_score_reference(...)` when symbol missing
+        - `qjl_gqa_score(...)`: extension-first, scaffold fallback to `qjl_gqa_score_reference(...)` when symbol missing
+        - `quantized_bmm(...)`: extension-first, scaffold fallback to `quantized_bmm_reference(...)` when symbol missing
     - Added API compatibility tests:
       - `tests/test_vulkan_backend_api_compat.py`
       - Signature parity vs `turboquant/cuda_backend.py`: pass
       - Expected exception behavior (unsupported dtype, invalid bits, runtime gate): pass
+    - Added dispatch behavior tests:
+      - `tests/test_vulkan_qjl_quant_dispatch.py`: pass
+      - `tests/test_vulkan_qjl_score_dispatch.py`: pass
+      - `tests/test_vulkan_qjl_gqa_score_dispatch.py`: pass
+      - `tests/test_vulkan_quantized_bmm_dispatch.py`: pass
+      - Includes extension-symbol preference and scaffold-fallback parity checks.
+    - Validation run (including fallback regression/smoke coverage): pass
+      - `tests/test_vulkan_backend_api_compat.py`
+      - `tests/test_vulkan_qjl_quant_dispatch.py`
+      - `tests/test_vulkan_qjl_score_dispatch.py`
+      - `tests/test_vulkan_qjl_gqa_score_dispatch.py`
+      - `tests/test_vulkan_quantized_bmm_dispatch.py`
+      - `tests/test_vulkan_fallback_regressions.py`
+      - `tests/test_vulkan_backend_smoke.py`
+      - Result: `22 passed`
     - Fallback behavior examples:
       - `is_vulkan_available() == False` -> higher-level dispatch should use CUDA/PyTorch fallback.
       - Valid `qjl_*` call with Vulkan not ready -> `RuntimeError` with actionable context.
-      - Valid `qjl_*` call with Vulkan ready but runtime kernel not wired -> `NotImplementedError`.
+      - Valid call with Vulkan ready and extension symbol present -> extension kernel path is selected.
+      - Valid call with Vulkan ready but extension symbol missing -> scaffold reference fallback is selected.
 
 ## Priority 1 - Runtime dispatch and safety
 - [ ] Add backend selection policy in Python package
