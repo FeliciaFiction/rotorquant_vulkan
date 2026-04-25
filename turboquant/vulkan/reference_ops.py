@@ -158,3 +158,83 @@ def qjl_score_reference(
 
     scores = scl * norm_k * k_inner + scl_o * norm_o * out_inner
     return scores.reshape(b, h, n * g, 1).contiguous()
+
+
+def qjl_gqa_score_reference(
+    key_quant: torch.Tensor,
+    key_outlier_quant: torch.Tensor,
+    key_norm: torch.Tensor,
+    key_outlier_norm: torch.Tensor,
+    outlier_indices: torch.Tensor,
+    query_sketch: torch.Tensor,
+    query_states: torch.Tensor,
+    rand_prj: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Reference implementation of qjl_gqa_score kernel logic.
+
+    Shapes:
+      key_quant:         [B,KH,N,G,S/8]       uint8
+      key_outlier_quant: [B,KH,N,G,SO/8]      uint8
+      key_norm:          [B,KH,N,G]           float16/float32/bfloat16
+      key_outlier_norm:  [B,KH,N,G]           float16/float32/bfloat16
+      outlier_indices:   [B,KH,N,O]           int/uint
+      query_sketch:      [B,QH,S]             float32
+      query_states:      [B,QH,D]             float16/float32/bfloat16
+      rand_prj:          [D,S]                float16/float32/bfloat16
+
+    Returns:
+      scores: [B,QH,N*G,1] float32
+    """
+    if key_quant.dim() != 5:
+        raise ValueError("key_quant must be 5D [B,KH,N,G,S/8]")
+    if key_outlier_quant.dim() != 5:
+        raise ValueError("key_outlier_quant must be 5D [B,KH,N,G,SO/8]")
+    if query_states.dim() != 3:
+        raise ValueError("query_states must be 3D [B,QH,D]")
+
+    b, kh, n, g, hash_dim = key_quant.shape
+    so_hash_dim = key_outlier_quant.shape[-1]
+    s = hash_dim * 8
+    so = so_hash_dim * 8
+
+    bq, qh, d = query_states.shape
+    if bq != b:
+        raise ValueError("query_states batch dim must match key tensors")
+    if qh % kh != 0:
+        raise ValueError("query head count must be divisible by kv head count")
+    gqa_group_size = qh // kh
+
+    if query_sketch.shape != (b, qh, s):
+        raise ValueError("query_sketch must have shape [B,QH,S]")
+    if rand_prj.shape != (d, s):
+        raise ValueError("rand_prj must have shape [D,S]")
+    if outlier_indices.shape[:3] != (b, kh, n):
+        raise ValueError("outlier_indices leading dims must match [B,KH,N]")
+
+    out_idx_kh = outlier_indices.long().clamp(min=0, max=max(d - 1, 0))
+    out_idx_qh = out_idx_kh.repeat_interleave(gqa_group_size, dim=1)
+
+    q_expanded = query_states.unsqueeze(2).expand(b, qh, n, d)
+    q_vals = torch.gather(q_expanded, -1, out_idx_qh)  # [B,QH,N,O]
+    prj_rows = rand_prj[out_idx_qh]                     # [B,QH,N,O,S]
+    q_outlier_sketch = (q_vals.unsqueeze(-1).to(prj_rows.dtype) * prj_rows).sum(dim=3).to(torch.float32)
+
+    signs_k = _unpack_sign_bits(key_quant.to(torch.uint8), s).repeat_interleave(gqa_group_size, dim=1)
+    signs_o = _unpack_sign_bits(key_outlier_quant.to(torch.uint8), so).repeat_interleave(gqa_group_size, dim=1)
+
+    q_sketch_corr = query_sketch.to(torch.float32).unsqueeze(2).unsqueeze(2) - q_outlier_sketch.unsqueeze(3)
+    k_inner = (signs_k * q_sketch_corr).sum(dim=-1)
+
+    q_out = q_outlier_sketch[..., :so].unsqueeze(3)
+    out_inner = (signs_o * q_out).sum(dim=-1)
+
+    scl = torch.sqrt(torch.tensor(torch.pi / 2.0, dtype=torch.float32)) / float(s)
+    scl_o = torch.sqrt(torch.tensor(torch.pi / 2.0, dtype=torch.float32)) / float(so if so > 0 else 1)
+
+    norm_o = key_outlier_norm.to(torch.float32).repeat_interleave(gqa_group_size, dim=1)
+    norm_k_sq = key_norm.to(torch.float32).repeat_interleave(gqa_group_size, dim=1) ** 2 - norm_o ** 2
+    norm_k = torch.sqrt(torch.clamp(norm_k_sq, min=0.0))
+
+    scores = scl * norm_k * k_inner + scl_o * norm_o * out_inner
+    return scores.reshape(b, qh, n * g, 1).contiguous()

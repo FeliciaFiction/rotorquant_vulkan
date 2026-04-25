@@ -51,6 +51,8 @@ def _ensure_build_extension(build_extension_cls):
 
 
 def _resolve_glslc() -> str | None:
+    exe = "glslc.exe" if os.name == "nt" else "glslc"
+
     override = os.environ.get("TURBOQUANT_GLSLC", "").strip()
     if override:
         return override
@@ -61,10 +63,30 @@ def _resolve_glslc() -> str | None:
 
     vulkan_sdk = os.environ.get("VULKAN_SDK", "").strip()
     if vulkan_sdk:
-        exe = "glslc.exe" if os.name == "nt" else "glslc"
         candidate = Path(vulkan_sdk) / "Bin" / exe
         if candidate.exists():
             return str(candidate)
+
+    # Windows fallback: scan common Vulkan SDK install root even when VULKAN_SDK
+    # is not exported in the active shell.
+    if os.name == "nt":
+        sdk_root = Path("C:/VulkanSDK")
+        if sdk_root.exists():
+            def _version_key(p: Path):
+                parts = []
+                for token in p.name.replace("-", ".").split("."):
+                    if token.isdigit():
+                        parts.append(int(token))
+                return tuple(parts)
+
+            for sdk_dir in sorted(
+                [p for p in sdk_root.iterdir() if p.is_dir()],
+                key=_version_key,
+                reverse=True,
+            ):
+                candidate = sdk_dir / "Bin" / exe
+                if candidate.exists():
+                    return str(candidate)
     return None
 
 

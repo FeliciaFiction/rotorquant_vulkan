@@ -1,10 +1,124 @@
 #version 450
 
-// Placeholder shader for build and packaging scaffolding.
-// Real implementation will be ported from qjl_gqa_score CUDA kernel.
+// First-pass Vulkan port of qjl_gqa_score kernel logic.
+// Notes:
+// - Float storage path for query/norm/projection in this scaffold.
+// - Packed key quant buffers are read as uint where low 8 bits are payload.
+// - Runtime dispatch wiring is handled in follow-up tasks.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-void main() {
-    // no-op
+layout(std430, binding = 0) readonly buffer KeyQuant {
+    uint key_quant[];
+};
+
+layout(std430, binding = 1) readonly buffer KeyOutlierQuant {
+    uint key_outlier_quant[];
+};
+
+layout(std430, binding = 2) readonly buffer KeyNorm {
+    float key_norm[];
+};
+
+layout(std430, binding = 3) readonly buffer KeyOutlierNorm {
+    float key_outlier_norm[];
+};
+
+layout(std430, binding = 4) readonly buffer OutlierIndices {
+    uint outlier_indices[];
+};
+
+layout(std430, binding = 5) readonly buffer QuerySketch {
+    float query_sketch[];
+};
+
+layout(std430, binding = 6) readonly buffer QueryStates {
+    float query_states[];
+};
+
+layout(std430, binding = 7) readonly buffer RandProjection {
+    float rand_prj[];
+};
+
+layout(std430, binding = 8) writeonly buffer Scores {
+    float scores[];
+};
+
+layout(push_constant) uniform QJLGQAScoreParams {
+    uint total_vectors;      // batch * q_head * n_size * group_size
+    uint q_head;
+    uint k_head;
+    uint n_size;
+    uint group_size;
+    uint emb_dim;
+    uint sketch_dim;
+    uint hash_dim;           // sketch_dim / 8
+    uint outlier_sketch_dim;
+    uint outlier_hash_dim;   // outlier_sketch_dim / 8
+    uint outlier_counts;
+} params;
+
+float bit_sign(uint packed, uint bit) {
+    return (((packed >> bit) & 1u) == 1u) ? 1.0 : -1.0;
 }
 
+void main() {
+    uint vector_idx = gl_GlobalInvocationID.x;
+    if (vector_idx >= params.total_vectors) {
+        return;
+    }
+
+    uint g = vector_idx % params.group_size;
+    uint qhn = vector_idx / params.group_size;
+    uint n = qhn % params.n_size;
+    uint bq = qhn / params.n_size;
+
+    uint qh = bq % params.q_head;
+    uint b = bq / params.q_head;
+    uint gqa_group_size = max(params.q_head / max(params.k_head, 1u), 1u);
+    uint kh = qh / gqa_group_size;
+
+    uint qbh = b * params.q_head + qh;
+    uint kbh = b * params.k_head + kh;
+
+    uint outlier_base = (kbh * params.n_size + n) * params.outlier_counts;
+    uint query_sketch_base = qbh * params.sketch_dim;
+    uint query_state_base = qbh * params.emb_dim;
+    uint key_base = ((kbh * params.n_size + n) * params.group_size + g) * params.hash_dim;
+    uint outlier_key_base = ((kbh * params.n_size + n) * params.group_size + g) * params.outlier_hash_dim;
+    uint norm_idx = (kbh * params.n_size + n) * params.group_size + g;
+
+    float k_inner = 0.0;
+    float outlier_inner = 0.0;
+
+    for (uint p = 0u; p < params.sketch_dim; ++p) {
+        uint pbyte = p / 8u;
+        uint pbit = p % 8u;
+        uint kpacked = key_quant[key_base + pbyte] & 0xFFu;
+
+        float q_outlier_sketch = 0.0;
+        for (uint i = 0u; i < params.outlier_counts; ++i) {
+            uint oi = outlier_indices[outlier_base + i];
+            float qv = query_states[query_state_base + oi];
+            float rp = rand_prj[oi * params.sketch_dim + p];
+            q_outlier_sketch += qv * rp;
+        }
+
+        float q_corr = query_sketch[query_sketch_base + p] - q_outlier_sketch;
+        k_inner += bit_sign(kpacked, pbit) * q_corr;
+
+        if (p < params.outlier_sketch_dim) {
+            uint opacked = key_outlier_quant[outlier_key_base + pbyte] & 0xFFu;
+            outlier_inner += bit_sign(opacked, pbit) * q_outlier_sketch;
+        }
+    }
+
+    float norm_o = key_outlier_norm[norm_idx];
+    float nk2 = key_norm[norm_idx] * key_norm[norm_idx] - norm_o * norm_o;
+    float norm_k = sqrt(max(nk2, 0.0));
+
+    float pi_over_2 = 1.5707963267948966;
+    float scl = sqrt(pi_over_2) / float(params.sketch_dim);
+    float scl_o = sqrt(pi_over_2) / float(max(params.outlier_sketch_dim, 1u));
+    float score = scl * norm_k * k_inner + scl_o * norm_o * outlier_inner;
+    scores[vector_idx] = score;
+}

@@ -179,6 +179,22 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate correctness when KV head count differs from query head count.
   - Report:
     - Include coverage matrix by `num_heads`, `num_kv_heads`, head_dim.
+  - Progress update (2026-04-25):
+    - Implemented first-pass Vulkan `qjl_gqa_score` compute logic in `turboquant/vulkan/shaders/qjl_gqa_score.comp`
+      (GQA query-head to KV-head mapping, query sketch correction, outlier sketch contribution, norm split, score aggregation).
+    - Added CPU reference op for parity testing:
+      - `turboquant/vulkan/reference_ops.py::qjl_gqa_score_reference(...)`
+    - Added GQA parity tests:
+      - `tests/test_vulkan_qjl_gqa_score_reference.py`
+      - float32 case (`num_kv_heads=2`, `num_heads=6`, `head_dim=128`) parity vs naive reference: pass
+      - float16 case (`num_kv_heads=1`, `num_heads=2`, `head_dim=128`) parity vs naive reference: pass
+    - Shader compile validation through build pipeline: pass after glslc discovery fix in `setup.py`.
+      - Root cause: Vulkan SDK was installed at `C:\VulkanSDK\1.4.341.1`, but `VULKAN_SDK` env var was not exported in the shell, so `glslc` was not discovered.
+      - Fix: extended `setup.py::_resolve_glslc()` to auto-scan `C:\VulkanSDK\*\\Bin\\glslc.exe` (newest version first) when PATH and `VULKAN_SDK` resolution fail.
+      - Validation command: `python setup.py --vulkan build_ext --inplace` (2026-04-25) -> pass, shader generation completed and extension copied in-place.
+  - Remaining before close:
+    - CUDA parity comparison is blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
+    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles in scaffold, dispatch integration comes in subsequent tasks).
 - [ ] Port required path(s) from `turboquant/csrc/quantization.cu`
   - Start with the minimal path needed for `quantized_bmm` parity
   - Tests:
