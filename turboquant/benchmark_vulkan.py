@@ -9,7 +9,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import math
 import time
 from typing import Callable
 
@@ -24,6 +23,24 @@ from turboquant.vulkan.reference_ops import (
     qjl_score_reference,
     quantized_bmm_reference,
 )
+
+DEFAULT_ACCEPTANCE_THRESHOLDS = {
+    # Vulkan reference should stay within a practical range of PyTorch path.
+    "vs_pytorch_ratio_max": {
+        "qjl_quant": 2.0,
+        "qjl_score": 2.0,
+        "qjl_gqa_score": 2.0,
+        "quantized_bmm": 2.0,
+    },
+    # When CUDA is available, compare to CUDA path.
+    # Kept relaxed in scaffold phase; tighten after runtime wiring/profiling.
+    "vs_cuda_ratio_max": {
+        "qjl_quant": 4.0,
+        "qjl_score": 4.0,
+        "qjl_gqa_score": 4.0,
+        "quantized_bmm": 4.0,
+    },
+}
 
 
 def _device_sync():
@@ -225,12 +242,88 @@ def _print_rows(op_name: str, rows: list[dict]):
     print()
 
 
+def _row_by_path(rows: list[dict], path_name: str):
+    for row in rows:
+        if row.get("path") == path_name:
+            return row
+    return None
+
+
+def evaluate_acceptance_thresholds(results_by_op: dict, thresholds: dict | None = None):
+    thresholds = thresholds or DEFAULT_ACCEPTANCE_THRESHOLDS
+    out = {
+        "per_op": {},
+        "overall_status": "pass",
+        "detail": "all available threshold checks passed",
+    }
+
+    saw_blocked = False
+    for op_name, rows in results_by_op.items():
+        per = {
+            "vs_pytorch": {"status": "blocked", "ratio": None, "limit": thresholds["vs_pytorch_ratio_max"].get(op_name)},
+            "vs_cuda": {"status": "blocked", "ratio": None, "limit": thresholds["vs_cuda_ratio_max"].get(op_name)},
+        }
+
+        vk_row = _row_by_path(rows, "vulkan-reference")
+        pt_row = _row_by_path(rows, "pytorch") or _row_by_path(rows, "pytorch-naive")
+        cuda_row = _row_by_path(rows, "cuda")
+
+        if vk_row and pt_row and vk_row.get("ok") and pt_row.get("ok"):
+            ratio = float(vk_row["latency_ms"]) / float(pt_row["latency_ms"])
+            per["vs_pytorch"]["ratio"] = ratio
+            if ratio <= per["vs_pytorch"]["limit"]:
+                per["vs_pytorch"]["status"] = "pass"
+            else:
+                per["vs_pytorch"]["status"] = "fail"
+                out["overall_status"] = "fail"
+                out["detail"] = "one or more Vulkan-vs-PyTorch thresholds failed"
+        else:
+            saw_blocked = True
+
+        if cuda_row and cuda_row.get("ok") and vk_row and vk_row.get("ok"):
+            ratio = float(vk_row["latency_ms"]) / float(cuda_row["latency_ms"])
+            per["vs_cuda"]["ratio"] = ratio
+            if ratio <= per["vs_cuda"]["limit"]:
+                per["vs_cuda"]["status"] = "pass"
+            else:
+                per["vs_cuda"]["status"] = "fail"
+                out["overall_status"] = "fail"
+                out["detail"] = "one or more Vulkan-vs-CUDA thresholds failed"
+        else:
+            saw_blocked = True
+
+        out["per_op"][op_name] = per
+
+    if out["overall_status"] == "pass" and saw_blocked:
+        out["overall_status"] = "blocked"
+        out["detail"] = "threshold evaluation blocked for one or more comparisons (e.g. CUDA path unavailable)"
+    return out
+
+
+def _print_threshold_report(threshold_report: dict):
+    print("=" * 78)
+    print("Threshold Evaluation")
+    print("=" * 78)
+    print(f"overall: {threshold_report['overall_status']} ({threshold_report['detail']})")
+    print(f"{'op':<18} {'vs_pytorch':>14} {'ratio':>10} {'limit':>10} {'vs_cuda':>12} {'ratio':>10} {'limit':>10}")
+    for op_name, data in threshold_report["per_op"].items():
+        p = data["vs_pytorch"]
+        c = data["vs_cuda"]
+        p_ratio = "-" if p["ratio"] is None else f"{p['ratio']:.3f}"
+        c_ratio = "-" if c["ratio"] is None else f"{c['ratio']:.3f}"
+        p_lim = "-" if p["limit"] is None else f"{p['limit']:.3f}"
+        c_lim = "-" if c["limit"] is None else f"{c['limit']:.3f}"
+        print(f"{op_name:<18} {p['status']:>14} {p_ratio:>10} {p_lim:>10} {c['status']:>12} {c_ratio:>10} {c_lim:>10}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark Vulkan/CUDA/PyTorch kernel paths with fixed seeds")
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--quick", action="store_true", help="Use very small benchmark loops")
     parser.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16")
+    parser.add_argument("--check-thresholds", action="store_true", help="Evaluate acceptance thresholds on collected benchmark results")
     args = parser.parse_args()
 
     if args.quick:
@@ -246,6 +339,12 @@ def main():
     rows_score = _run_qjl_score_case(device, dtype, args.iters, args.warmup)
     rows_gqa = _run_qjl_gqa_score_case(device, dtype, args.iters, args.warmup)
     rows_bmm = _run_quantized_bmm_case(device, dtype, args.iters, args.warmup)
+    results = {
+        "qjl_quant": rows_quant,
+        "qjl_score": rows_score,
+        "qjl_gqa_score": rows_gqa,
+        "quantized_bmm": rows_bmm,
+    }
 
     print("=" * 78)
     print("Benchmark Results")
@@ -254,6 +353,8 @@ def main():
     _print_rows("qjl_score", rows_score)
     _print_rows("qjl_gqa_score", rows_gqa)
     _print_rows("quantized_bmm", rows_bmm)
+    if args.check_thresholds:
+        _print_threshold_report(evaluate_acceptance_thresholds(results))
 
 
 if __name__ == "__main__":

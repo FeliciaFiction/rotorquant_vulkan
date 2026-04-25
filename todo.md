@@ -511,6 +511,28 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Re-check thresholds on at least one Intel Arc environment.
   - Report:
     - Include final threshold values and measured results.
+  - Progress update (2026-04-25):
+    - Added automated threshold evaluation in `turboquant/benchmark_vulkan.py`:
+      - `DEFAULT_ACCEPTANCE_THRESHOLDS`:
+        - Vulkan vs PyTorch latency ratio max (`vs_pytorch_ratio_max`): `2.0` for all 4 key ops.
+        - Vulkan vs CUDA latency ratio max (`vs_cuda_ratio_max`): `4.0` for all 4 key ops (scaffold-phase relaxed target).
+      - `evaluate_acceptance_thresholds(results_by_op, thresholds=...)` with per-op pass/fail/blocked statuses.
+      - CLI integration: `--check-thresholds` prints threshold table and overall status.
+    - Added automated pass/fail unit tests:
+      - `tests/test_vulkan_benchmark_thresholds.py`
+      - Covers blocked (missing CUDA), fail (Vulkan too slow), and pass scenarios.
+    - Validation commands:
+      - `python -m pytest tests/test_vulkan_benchmark_thresholds.py -q` -> pass
+      - `python -m turboquant.benchmark_vulkan --quick --dtype fp16 --check-thresholds` -> pass (script runs; threshold report emitted)
+    - Measured threshold outcomes (`--quick`, this CPU host):
+      - `qjl_quant`: Vulkan/PyTorch ratio `1.416` (pass vs limit `2.0`)
+      - `qjl_score`: Vulkan/PyTorch ratio `1.021` (pass vs limit `2.0`)
+      - `qjl_gqa_score`: Vulkan/PyTorch ratio `1.005` (pass vs limit `2.0`)
+      - `quantized_bmm`: Vulkan/PyTorch ratio `0.004` (pass vs limit `2.0`)
+      - CUDA ratio checks: blocked (CUDA kernels unavailable on this host)
+      - Overall threshold status: `blocked` (due missing CUDA comparison path)
+  - Remaining validation:
+    - Re-check threshold results on at least one Intel Arc Vulkan 1.3 environment.
 - [ ] Profile and tune
   - Workgroup size tuning
   - Buffer reuse and descriptor caching
