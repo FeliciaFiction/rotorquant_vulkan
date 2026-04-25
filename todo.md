@@ -302,6 +302,30 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Manual validation on at least one real Vulkan 1.3-capable device.
   - Report:
     - Include feature checklist and fallback outcomes.
+  - Progress update (2026-04-25):
+    - Implemented strict Vulkan capability checks in `turboquant/vulkan_backend.py`:
+      - Added structured capability collection and evaluation:
+        - `get_vulkan_capability_report()`
+        - Vulkan API version parsing and `>= 1.3` gating
+        - Required extension checks (`VK_KHR_storage_buffer_storage_class`)
+        - Required feature checks (`computeShader`)
+      - Updated runtime gate to enforce strict checks:
+        - `_require_vulkan_ready(...)` now reports concrete missing capabilities and explicit fallback guidance (`CUDA` then `PyTorch`).
+      - Updated availability gate:
+        - `is_vulkan_available()` now returns true only when all strict checks pass.
+    - Added mocked capability unit tests:
+      - `tests/test_vulkan_capability_checks.py`
+      - Covers runtime-unavailable, version-too-low, missing-extension, missing-feature, passing checklist, and fallback error messaging.
+    - Feature checklist (strict gate):
+      - Runtime available
+      - Vulkan API version >= 1.3
+      - Extension `VK_KHR_storage_buffer_storage_class`
+      - Feature `computeShader`
+    - Fallback outcomes:
+      - Any strict-check failure -> Vulkan path rejected with clear reason, caller should select `CUDA` if available else `PyTorch`.
+  - Validation status:
+    - Mocked capability tests: pass
+    - Manual validation on a real Vulkan 1.3-capable runtime: blocked in current scaffold environment (native runtime probe still returns unavailable).
 - [ ] Add vendor-aware guardrails (copy llama.cpp pattern)
   - Detect Intel/AMD/NVIDIA vendor IDs
   - Gate optional fast paths by supported extensions
