@@ -1,10 +1,114 @@
 #version 450
 
-// Placeholder shader for build and packaging scaffolding.
-// Real implementation will be ported from qjl_quant CUDA kernel.
+// First-pass Vulkan port of qjl_quant kernel logic.
+// Notes:
+// - Uses float storage for key states / projections and outlier norms in this scaffold.
+// - Packed hash output is written as uint where the lower 8 bits are the byte payload.
+// - Runtime wiring is added in follow-up tasks; this shader is compiled and validated now.
+
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-void main() {
-    // no-op
+layout(std430, binding = 0) readonly buffer KeyStates {
+    float key_states[];
+};
+
+layout(std430, binding = 1) writeonly buffer KeyQuant {
+    uint key_quant[];
+};
+
+layout(std430, binding = 2) writeonly buffer KeyOutlierQuant {
+    uint key_outlier_quant[];
+};
+
+layout(std430, binding = 3) readonly buffer OutlierIndices {
+    uint outlier_indices[];
+};
+
+layout(std430, binding = 4) readonly buffer RandProjection {
+    float rand_prj[];
+};
+
+layout(std430, binding = 5) writeonly buffer OutlierNorms {
+    float outlier_norms[];
+};
+
+layout(push_constant) uniform QJLQuantParams {
+    uint total_vectors;       // batch * head * n * group_size
+    uint group_size;
+    uint emb_dim;
+    uint sketch_dim;
+    uint hash_dim;            // sketch_dim / 8
+    uint outlier_sketch_dim;
+    uint outlier_hash_dim;    // outlier_sketch_dim / 8
+    uint outlier_counts;
+} params;
+
+bool is_outlier(uint bhn, uint ch) {
+    uint base = bhn * params.outlier_counts;
+    for (uint i = 0; i < params.outlier_counts; ++i) {
+        if (outlier_indices[base + i] == ch) {
+            return true;
+        }
+    }
+    return false;
 }
 
+void main() {
+    uint vector_idx = gl_GlobalInvocationID.x;
+    uint pbyte = gl_GlobalInvocationID.y;
+
+    if (vector_idx >= params.total_vectors || pbyte >= params.hash_dim) {
+        return;
+    }
+
+    uint bhn = vector_idx / params.group_size;
+    uint base_key = vector_idx * params.emb_dim;
+
+    uint packed_inlier = 0u;
+    uint packed_outlier = 0u;
+
+    for (uint bit = 0u; bit < 8u; ++bit) {
+        uint proj_idx = pbyte * 8u + bit;
+        if (proj_idx >= params.sketch_dim) {
+            break;
+        }
+
+        uint base_proj = proj_idx * params.emb_dim;
+        float inlier_sum = 0.0;
+        float outlier_sum = 0.0;
+
+        for (uint ch = 0u; ch < params.emb_dim; ++ch) {
+            float v = key_states[base_key + ch];
+            float p = rand_prj[base_proj + ch];
+            if (is_outlier(bhn, ch)) {
+                outlier_sum += v * p;
+            } else {
+                inlier_sum += v * p;
+            }
+        }
+
+        if (inlier_sum > 0.0) {
+            packed_inlier |= (1u << bit);
+        }
+        if (outlier_sum > 0.0 && proj_idx < params.outlier_sketch_dim) {
+            packed_outlier |= (1u << bit);
+        }
+    }
+
+    key_quant[vector_idx * params.hash_dim + pbyte] = packed_inlier;
+
+    if (pbyte < params.outlier_hash_dim) {
+        key_outlier_quant[vector_idx * params.outlier_hash_dim + pbyte] = packed_outlier;
+    }
+
+    if (pbyte == 0u) {
+        float acc = 0.0;
+        for (uint ch = 0u; ch < params.emb_dim; ++ch) {
+            if (is_outlier(bhn, ch)) {
+                float v = key_states[base_key + ch];
+                acc += v * v;
+            }
+        }
+        outlier_norms[vector_idx] = sqrt(acc);
+    }
+}

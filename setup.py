@@ -11,9 +11,17 @@ Usage:
 from setuptools import setup, find_packages
 import os
 import sys
+import json
+import shutil
+import subprocess
+from pathlib import Path
 
 ext_modules = []
 cmdclass = {}
+REPO_ROOT = Path(__file__).resolve().parent
+VULKAN_DIR = REPO_ROOT / "turboquant" / "vulkan"
+SHADER_DIR = VULKAN_DIR / "shaders"
+SPV_DIR = SHADER_DIR / "spv"
 
 def _pop_flag(flag: str) -> bool:
     found = flag in sys.argv
@@ -41,7 +49,108 @@ def _ensure_build_extension(build_extension_cls):
     if 'build_ext' not in cmdclass:
         cmdclass['build_ext'] = build_extension_cls
 
-if build_cuda or _build_ext_requested:
+
+def _resolve_glslc() -> str | None:
+    override = os.environ.get("TURBOQUANT_GLSLC", "").strip()
+    if override:
+        return override
+
+    which = shutil.which("glslc")
+    if which:
+        return which
+
+    vulkan_sdk = os.environ.get("VULKAN_SDK", "").strip()
+    if vulkan_sdk:
+        exe = "glslc.exe" if os.name == "nt" else "glslc"
+        candidate = Path(vulkan_sdk) / "Bin" / exe
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _probe_glslc_extension(glslc: str, test_shader: Path) -> bool:
+    proc = subprocess.run(
+        [glslc, "-fshader-stage=compute", "--target-env=vulkan1.3", str(test_shader), "-o", os.devnull],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return proc.returncode == 0
+
+
+def _compile_shader(glslc: str, source_file: Path, output_file: Path):
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [glslc, "--target-env=vulkan1.3", "-o", str(output_file), str(source_file)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Shader compile failed for {source_file.name}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
+
+
+if build_vulkan:
+    try:
+        from torch.utils.cpp_extension import BuildExtension
+
+        class VulkanBuildExtension(BuildExtension):
+            def run(self):
+                self._prepare_vulkan_shaders()
+                super().run()
+
+            def _prepare_vulkan_shaders(self):
+                glslc = _resolve_glslc()
+                if not glslc or not Path(glslc).exists():
+                    raise RuntimeError(
+                        "Vulkan build requested but glslc was not found. "
+                        "Install Vulkan SDK or set TURBOQUANT_GLSLC to an absolute glslc path."
+                    )
+
+                feature_tests = {
+                    "GGML_VULKAN_COOPMAT_GLSLC_SUPPORT": SHADER_DIR / "feature-tests" / "coopmat.comp",
+                    "GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT": SHADER_DIR / "feature-tests" / "coopmat2.comp",
+                    "GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT": SHADER_DIR / "feature-tests" / "integer_dot.comp",
+                    "GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT": SHADER_DIR / "feature-tests" / "bfloat16.comp",
+                }
+                feature_results = {
+                    feature: _probe_glslc_extension(glslc, path)
+                    for feature, path in feature_tests.items()
+                }
+
+                shader_sources = [
+                    SHADER_DIR / "qjl_quant.comp",
+                    SHADER_DIR / "qjl_score.comp",
+                    SHADER_DIR / "qjl_gqa_score.comp",
+                ]
+                for source in shader_sources:
+                    _compile_shader(glslc, source, SPV_DIR / f"{source.name}.spv")
+
+                probe_report = SPV_DIR / "feature-probes.json"
+                probe_report.write_text(json.dumps(feature_results, indent=2), encoding="utf-8")
+
+                for ext in self.extensions:
+                    if ext.name == "turboquant.vulkan_backend_ext":
+                        existing_macros = list(getattr(ext, "define_macros", []) or [])
+                        for feature, enabled in feature_results.items():
+                            if enabled:
+                                existing_macros.append((feature, "1"))
+                        ext.define_macros = existing_macros
+
+                print("Vulkan shader generation complete.")
+                for feature, enabled in feature_results.items():
+                    print(f"  {feature}={'ON' if enabled else 'OFF'}")
+                print(f"  Shader artifacts: {SPV_DIR}")
+
+        cmdclass["build_ext"] = VulkanBuildExtension
+    except ImportError:
+        pass
+
+if build_cuda:
     try:
         from torch.utils.cpp_extension import BuildExtension, CUDAExtension
         import torch
@@ -155,6 +264,9 @@ setup(
         "turboquant.vulkan": [
             "shaders/*.comp",
             "shaders/CMakeLists.txt",
+            "shaders/spv/*.spv",
+            "shaders/spv/feature-probes.json",
+            "shaders/feature-tests/*.comp",
         ],
     },
     ext_modules=ext_modules,

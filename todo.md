@@ -90,7 +90,7 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - Shader compile path pass: CMake configure + build generated `.spv` outputs for all placeholder shaders.
     - Unresolved symbols:
       - None in current scaffold extension import path.
-- [ ] Add shader build/generation flow inspired by llama.cpp
+- [x] Add shader build/generation flow inspired by llama.cpp
   - Probe glslc extension support at build time
   - Generate/compile shader artifacts at build time
   - Embed shader blobs or package them reliably
@@ -102,6 +102,33 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm feature probe flags are correctly propagated into build.
   - Report:
     - Include probe results table and generated shader artifact inventory.
+  - Result summary (2026-04-25):
+    - Implemented build-time Vulkan shader pipeline in `setup.py` (custom `build_ext` path when `--vulkan` is requested):
+      - Resolves `glslc` from `TURBOQUANT_GLSLC`, PATH, or `VULKAN_SDK/Bin`.
+      - Probes extension support using dedicated feature-test shaders.
+      - Compiles `.comp` shaders to `turboquant/vulkan/shaders/spv/*.spv`.
+      - Writes probe report to `turboquant/vulkan/shaders/spv/feature-probes.json`.
+      - Propagates probe flags into extension compile macros.
+    - Added feature-test shaders:
+      - `shaders/feature-tests/{coopmat.comp, coopmat2.comp, integer_dot.comp, bfloat16.comp}`
+    - Added extension API surface for validation:
+      - `vulkan_compile_features()` in `turboquant.vulkan_backend_ext`
+    - Tests and validation:
+      - Clean-build shader generation (`spv` dir removed first): pass
+      - Vulkan extension build with shader generation/probing: pass
+      - SPIR-V inventory check: pass (`qjl_quant`, `qjl_score`, `qjl_gqa_score`)
+      - Probe-flag propagation check (`feature-probes.json` vs extension macros): pass
+      - Negative test (`TURBOQUANT_GLSLC` set to invalid path): pass (clear RuntimeError)
+    - Probe results table (this machine):
+      - `GGML_VULKAN_COOPMAT_GLSLC_SUPPORT`: ON
+      - `GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT`: ON
+      - `GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT`: ON
+      - `GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT`: ON
+    - Generated artifacts:
+      - `turboquant/vulkan/shaders/spv/qjl_quant.comp.spv`
+      - `turboquant/vulkan/shaders/spv/qjl_score.comp.spv`
+      - `turboquant/vulkan/shaders/spv/qjl_gqa_score.comp.spv`
+      - `turboquant/vulkan/shaders/spv/feature-probes.json`
 
 ## Priority 1 - Kernel parity (must-have for functional Vulkan backend)
 - [ ] Port `turboquant/csrc/qjl_quant_kernel.cu` to Vulkan compute
@@ -112,6 +139,19 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate dtype coverage (`float16`, `float32`) and shape edge cases.
   - Report:
     - Include max/mean error, tolerances, and runtime comparison snapshot.
+  - Progress update (2026-04-25):
+    - Implemented first-pass Vulkan `qjl_quant` compute logic in `turboquant/vulkan/shaders/qjl_quant.comp`
+      (inlier/outlier split, sign-bit packing, outlier norm computation).
+    - Added CPU reference op for parity testing:
+      - `turboquant/vulkan/reference_ops.py::qjl_quant_reference(...)`
+    - Added dtype parity tests:
+      - `tests/test_vulkan_qjl_quant_reference.py`
+      - `float32` parity vs existing PyTorch quantization path: pass
+      - `float16` parity vs existing PyTorch quantization path: pass
+    - Shader compile validation through build pipeline: pass
+  - Remaining before close:
+    - CUDA parity comparison is blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
+    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles, but dispatch integration comes in subsequent tasks).
 - [ ] Port `turboquant/csrc/qjl_score_kernel.cu` to Vulkan compute
   - Tests:
     - Unit parity tests vs CUDA output across representative sequence lengths.
