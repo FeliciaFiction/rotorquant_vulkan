@@ -1,0 +1,10 @@
+#version 450
+
+// Placeholder shader for build and packaging scaffolding.
+// Real implementation will be ported from qjl_quant CUDA kernel.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    // no-op
+}
+
