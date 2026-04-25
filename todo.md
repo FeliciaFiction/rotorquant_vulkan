@@ -202,13 +202,20 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - `tests/test_vulkan_qjl_gqa_score_reference.py`
       - float32 case (`num_kv_heads=2`, `num_heads=6`, `head_dim=128`) parity vs naive reference: pass
       - float16 case (`num_kv_heads=1`, `num_heads=2`, `head_dim=128`) parity vs naive reference: pass
+    - Wired `qjl_gqa_score` wrapper dispatch in `turboquant/vulkan_backend.py`:
+      - Calls native extension symbol when present (`qjl_gqa_score_vulkan_*` variants).
+      - Uses validated scaffold fallback (`qjl_gqa_score_reference`) when extension symbol is not yet available.
+    - Added dispatch-path tests:
+      - `tests/test_vulkan_qjl_gqa_score_dispatch.py`
+      - extension-symbol path selection: pass
+      - scaffold fallback output parity vs reference op: pass
     - Shader compile validation through build pipeline: pass after glslc discovery fix in `setup.py`.
       - Root cause: Vulkan SDK was installed at `C:\VulkanSDK\1.4.341.1`, but `VULKAN_SDK` env var was not exported in the shell, so `glslc` was not discovered.
       - Fix: extended `setup.py::_resolve_glslc()` to auto-scan `C:\VulkanSDK\*\\Bin\\glslc.exe` (newest version first) when PATH and `VULKAN_SDK` resolution fail.
       - Validation command: `python setup.py --vulkan build_ext --inplace` (2026-04-25) -> pass, shader generation completed and extension copied in-place.
   - Remaining before close:
     - CUDA parity comparison is blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
-    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles in scaffold, dispatch integration comes in subsequent tasks).
+    - Native Vulkan extension kernel entrypoints for `qjl_gqa_score` (`qjl_gqa_score_vulkan_*`) are still pending in `turboquant/vulkan/vulkan_backend.cpp` (scaffold fallback currently used when symbols are absent).
 - [ ] Port required path(s) from `turboquant/csrc/quantization.cu`
   - Start with the minimal path needed for `quantized_bmm` parity
   - Tests:
