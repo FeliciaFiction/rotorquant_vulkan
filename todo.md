@@ -159,6 +159,19 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Validate stability for small/large norms and boundary indices.
   - Report:
     - Include parity metrics and any known divergence cases.
+  - Progress update (2026-04-25):
+    - Implemented first-pass Vulkan `qjl_score` compute logic in `turboquant/vulkan/shaders/qjl_score.comp`
+      (query sketch correction, outlier sketch contribution, norm split, score aggregation).
+    - Added CPU reference op for parity testing:
+      - `turboquant/vulkan/reference_ops.py::qjl_score_reference(...)`
+    - Added representative-sequence tests:
+      - `tests/test_vulkan_qjl_score_reference.py`
+      - float32 case (`N=4`) parity vs naive reference: pass
+      - float16 case (`N=3`) parity vs naive reference: pass
+    - Shader compile validation through build pipeline: pass
+  - Remaining before close:
+    - CUDA parity comparison is blocked on this machine (no CUDA toolkit/runtime configured for kernel build/execution).
+    - End-to-end Vulkan runtime execution path for this kernel is not wired yet (shader compiles, but dispatch integration comes in subsequent tasks).
 - [ ] Port `turboquant/csrc/qjl_gqa_score_kernel.cu` to Vulkan compute
   - Tests:
     - GQA-specific parity tests with multiple head/group configurations.

@@ -1,6 +1,26 @@
 import torch
 
 
+def _unpack_sign_bits(packed: torch.Tensor, sketch_dim: int) -> torch.Tensor:
+    """
+    Unpack uint8 sign bits into {-1, +1} float tensor.
+    Input shape:  [..., sketch_dim/8]
+    Output shape: [..., sketch_dim]
+    """
+    bits = 8
+    if sketch_dim % bits != 0:
+        raise ValueError("sketch_dim must be divisible by 8")
+    bytes_expected = sketch_dim // bits
+    if packed.shape[-1] != bytes_expected:
+        raise ValueError("packed last dim does not match sketch_dim/8")
+
+    shifts = torch.arange(bits, device=packed.device, dtype=torch.uint8).view(1, 1, 1, 1, 1, bits)
+    expanded = packed.unsqueeze(-1)
+    unpacked01 = ((expanded >> shifts) & 1).to(torch.float32)
+    unpacked = unpacked01.view(*packed.shape[:-1], sketch_dim)
+    return unpacked * 2.0 - 1.0
+
+
 def qjl_quant_reference(
     key_states: torch.Tensor,
     outlier_indices: torch.Tensor,
@@ -65,3 +85,76 @@ def qjl_quant_reference(
     outlier_norms = torch.sqrt((outlier.to(torch.float32) ** 2).sum(dim=-1)).to(key_states.dtype)
     return key_quant.contiguous(), key_outlier_quant.contiguous(), outlier_norms.contiguous()
 
+
+def qjl_score_reference(
+    key_quant: torch.Tensor,
+    key_outlier_quant: torch.Tensor,
+    key_norm: torch.Tensor,
+    key_outlier_norm: torch.Tensor,
+    outlier_indices: torch.Tensor,
+    query_sketch: torch.Tensor,
+    query_states: torch.Tensor,
+    rand_prj: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Reference implementation of qjl_score kernel logic.
+
+    Shapes:
+      key_quant:         [B,H,N,G,S/8]       uint8
+      key_outlier_quant: [B,H,N,G,SO/8]      uint8
+      key_norm:          [B,H,N,G]           float16/float32/bfloat16
+      key_outlier_norm:  [B,H,N,G]           float16/float32/bfloat16
+      outlier_indices:   [B,H,N,O]           int/uint
+      query_sketch:      [B,H,S]             float32
+      query_states:      [B,H,D]             float16/float32/bfloat16
+      rand_prj:          [D,S]               float16/float32/bfloat16
+
+    Returns:
+      scores: [B,H,N*G,1] float32
+    """
+    if key_quant.dim() != 5:
+        raise ValueError("key_quant must be 5D [B,H,N,G,S/8]")
+    if key_outlier_quant.dim() != 5:
+        raise ValueError("key_outlier_quant must be 5D [B,H,N,G,SO/8]")
+
+    b, h, n, g, hash_dim = key_quant.shape
+    so_hash_dim = key_outlier_quant.shape[-1]
+    s = hash_dim * 8
+    so = so_hash_dim * 8
+
+    if query_sketch.shape != (b, h, s):
+        raise ValueError("query_sketch must have shape [B,H,S]")
+    if query_states.dim() != 3:
+        raise ValueError("query_states must be 3D [B,H,D]")
+    d = query_states.shape[-1]
+    if rand_prj.shape != (d, s):
+        raise ValueError("rand_prj must have shape [D,S]")
+    if outlier_indices.shape[:3] != (b, h, n):
+        raise ValueError("outlier_indices leading dims must match [B,H,N]")
+
+    out_idx = outlier_indices.long().clamp(min=0, max=max(d - 1, 0))
+
+    # q_outlier_sketch[b,h,n,s] = sum_i query_states[b,h,out_idx_i] * rand_prj[out_idx_i, s]
+    q_expanded = query_states.unsqueeze(2).expand(b, h, n, d)
+    q_vals = torch.gather(q_expanded, -1, out_idx)  # [B,H,N,O]
+    prj_rows = rand_prj[out_idx]                     # [B,H,N,O,S]
+    q_outlier_sketch = (q_vals.unsqueeze(-1).to(prj_rows.dtype) * prj_rows).sum(dim=3).to(torch.float32)
+
+    signs_k = _unpack_sign_bits(key_quant.to(torch.uint8), s)                      # [B,H,N,G,S]
+    signs_o = _unpack_sign_bits(key_outlier_quant.to(torch.uint8), so)             # [B,H,N,G,SO]
+
+    q_sketch_corr = query_sketch.to(torch.float32).unsqueeze(2).unsqueeze(2) - q_outlier_sketch.unsqueeze(3)
+    k_inner = (signs_k * q_sketch_corr).sum(dim=-1)                                 # [B,H,N,G]
+
+    q_out = q_outlier_sketch[..., :so].unsqueeze(3)                                 # [B,H,N,1,SO]
+    out_inner = (signs_o * q_out).sum(dim=-1)                                       # [B,H,N,G]
+
+    scl = torch.sqrt(torch.tensor(torch.pi / 2.0, dtype=torch.float32)) / float(s)
+    scl_o = torch.sqrt(torch.tensor(torch.pi / 2.0, dtype=torch.float32)) / float(so if so > 0 else 1)
+
+    norm_o = key_outlier_norm.to(torch.float32)
+    norm_k_sq = key_norm.to(torch.float32) ** 2 - norm_o ** 2
+    norm_k = torch.sqrt(torch.clamp(norm_k_sq, min=0.0))
+
+    scores = scl * norm_k * k_inner + scl_o * norm_o * out_inner
+    return scores.reshape(b, h, n * g, 1).contiguous()
