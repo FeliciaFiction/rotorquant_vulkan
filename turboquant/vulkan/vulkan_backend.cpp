@@ -194,9 +194,8 @@ torch::Tensor qjl_score_impl(
     auto q_expanded = query_states.unsqueeze(2).expand({b, h, n, d});
     auto q_vals = q_expanded.gather(-1, out_idx);  // [B,H,N,O]
 
-    auto rand_rows = rand_prj.unsqueeze(0).unsqueeze(0).unsqueeze(0).expand({b, h, n, d, s});
-    auto row_idx = out_idx.unsqueeze(-1).expand({b, h, n, o, s});
-    auto prj_rows = rand_rows.gather(3, row_idx);  // [B,H,N,O,S]
+    auto flat_out_idx = out_idx.reshape({-1});  // [B*H*N*O]
+    auto prj_rows = rand_prj.index_select(0, flat_out_idx).view({b, h, n, o, s});  // [B,H,N,O,S]
     auto q_outlier_sketch = (q_vals.unsqueeze(-1).to(prj_rows.scalar_type()) * prj_rows)
                                 .sum(3)
                                 .to(torch::kFloat32);  // [B,H,N,S]
@@ -294,9 +293,8 @@ torch::Tensor qjl_gqa_score_impl(
     auto q_vals = q_expanded.gather(-1, out_idx_qh);  // [B,QH,N,O]
 
     const auto o = out_idx_qh.size(3);
-    auto rand_rows = rand_prj.unsqueeze(0).unsqueeze(0).unsqueeze(0).expand({b, qh, n, d, s});
-    auto row_idx = out_idx_qh.unsqueeze(-1).expand({b, qh, n, o, s});
-    auto prj_rows = rand_rows.gather(3, row_idx);  // [B,QH,N,O,S]
+    auto flat_out_idx_qh = out_idx_qh.reshape({-1});  // [B*QH*N*O]
+    auto prj_rows = rand_prj.index_select(0, flat_out_idx_qh).view({b, qh, n, o, s});  // [B,QH,N,O,S]
     auto q_outlier_sketch = (q_vals.unsqueeze(-1).to(prj_rows.scalar_type()) * prj_rows)
                                 .sum(3)
                                 .to(torch::kFloat32);  // [B,QH,N,S]
