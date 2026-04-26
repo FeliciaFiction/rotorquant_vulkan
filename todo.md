@@ -896,8 +896,18 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Local build/import path:
       - `Set-Location C:\\Git\\rotorquant; python setup.py --vulkan build_ext --inplace` -> pass
       - `python -c "import turboquant.vulkan_backend_ext ..."` -> pass
+  - Progress update (2026-04-26):
+    - Re-validated local CI-equivalent checks:
+      - `python -m pytest tests/test_vulkan_backend_smoke.py tests/test_vulkan_capability_checks.py tests/test_vulkan_fallback_regressions.py tests/test_vulkan_vendor_guardrails.py -q` -> `21 passed`
+      - full Vulkan suite + regressions -> `75 passed, 15 skipped`
+    - GitHub-run status validation attempt (without push):
+      - Remote branch check: `git ls-remote --heads origin codex/vulkan-1.3-plan` -> no remote branch found.
+      - Remote `main` workflow presence check for `.github/workflows/vulkan-build-sanity.yml` -> not found (404 on content fetch).
+    - User constraint captured:
+      - Do not push this branch to `github.com/scrya-com/rotorquant` because repository ownership is external.
   - Remaining validation:
     - Run at least one successful GitHub Actions cycle and capture run URL/status.
+    - Currently blocked by repository access/ownership policy (push disabled by user instruction), so a new Actions run cannot be triggered from this workspace.
 
 ## Suggested implementation order (short)
 1. Build toggle + project scaffolding
