@@ -62,3 +62,41 @@ def test_smoke_reports_blocked_single_pass_when_dispatch_not_wired(monkeypatch):
     assert report["device_discovery"]["ok"] is True
     assert report["single_pass_probe"]["status"] == "blocked"
     assert "not wired" in report["single_pass_probe"]["detail"].lower()
+
+
+def test_smoke_reports_passed_single_pass_when_dispatch_executes(monkeypatch):
+    monkeypatch.setattr(vk, "_VULKAN_EXT_AVAILABLE", True)
+    monkeypatch.setattr(
+        vk,
+        "get_vulkan_capability_report",
+        lambda: {
+            "strictly_available": True,
+            "checklist": {"runtime_available": True},
+            "vendor_name_normalized": "intel",
+            "device_name": "mock-intel-device",
+        },
+    )
+    monkeypatch.setattr(
+        vk,
+        "_shader_status_report",
+        lambda: {
+            "ok": True,
+            "detail": "all required shader sources and SPIR-V artifacts are present",
+            "found_sources": [],
+            "missing_sources": [],
+            "found_spv": [],
+            "missing_spv": [],
+            "shader_dir": "",
+            "spv_dir": "",
+        },
+    )
+    monkeypatch.setattr(
+        vk,
+        "qjl_quant",
+        lambda *args, **kwargs: (None, None, None),
+    )
+
+    report = vk.run_vulkan_smoke_checks()
+    assert report["overall_ok"] is True
+    assert report["device_discovery"]["ok"] is True
+    assert report["single_pass_probe"]["status"] == "passed"
