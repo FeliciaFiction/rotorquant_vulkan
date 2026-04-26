@@ -27,7 +27,12 @@ jobs:
       - name: Install Vulkan shader toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends glslang-tools
+          # glslc is required by the shader build path.
+          # Package availability differs across Ubuntu images, so try a few options.
+          sudo apt-get install -y --no-install-recommends glslc || \
+            sudo apt-get install -y --no-install-recommends shaderc || \
+            sudo apt-get install -y --no-install-recommends glslang-tools
+          command -v glslc
           glslc --version
 
       - name: Install Python dependencies
