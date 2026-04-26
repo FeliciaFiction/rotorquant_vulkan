@@ -652,7 +652,7 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Include before/after profile snapshots and observed gains.
 
 ## Priority 3 - Docs, packaging, CI
-- [ ] Update `README.md`
+- [x] Update `README.md`
   - Vulkan prerequisites (SDK/driver/toolchain)
   - Build examples for Vulkan-only and mixed builds
   - Runtime backend selection examples
@@ -678,7 +678,17 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - `python -c "import turboquant.vulkan_backend as vk; ..."` (`is_vulkan_available`, capability report, smoke summary) -> pass (all return expected scaffold-state values)
   - Validation status:
     - README content and commands are aligned with current code paths on this host.
-    - Clean-environment verification remains pending.
+    - Clean-environment verification: pass.
+  - Clean-environment re-validation (2026-04-26):
+    - Fresh venv: `C:\\Git\\rotorquant\\.tmp_readme_env`
+    - Commands executed successfully:
+      - `python -m pip install -e C:\\Git\\rotorquant`
+      - `python C:\\Git\\rotorquant\\setup.py --name`
+      - `python C:\\Git\\rotorquant\\setup.py --vulkan --name`
+      - `python -c "import turboquant as tq; print(tq.select_backend(request_vulkan=True))"`
+      - `python -c "import turboquant.vulkan_backend as vk; ..."`
+      - `python -m pip install -e C:\\Git\\rotorquant --config-settings=\"--build-option=--vulkan\"`
+      - `python -m pip install -e C:\\Git\\rotorquant --config-settings=\"--build-option=--cuda\" --config-settings=\"--build-option=--vulkan\"`
 - [x] Update `requirements.txt` / optional extras if needed
   - Keep base install lightweight
   - Put Vulkan-related Python deps behind extras where possible
@@ -722,6 +732,33 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
     - Confirm CI artifacts/logs are sufficient for failure triage.
   - Report:
     - Include CI job list, trigger conditions, and latest run status.
+  - Progress update (2026-04-26):
+    - Added workflow:
+      - `.github/workflows/vulkan-build-sanity.yml`
+    - CI job list:
+      - `vulkan-build-sanity` (ubuntu-latest)
+    - Trigger conditions:
+      - `pull_request` to `main`
+      - `push` to `main` and `codex/**`
+      - `workflow_dispatch`
+    - Job steps:
+      - install Vulkan shader toolchain (`glslang-tools` / `glslc`)
+      - install Python deps (`requirements.txt` + `requirements-validate.txt`)
+      - build Vulkan extension in-place (`python setup.py --vulkan build_ext --inplace`)
+      - validate extension import/feature probes
+      - run Vulkan sanity test subset:
+        - `tests/test_vulkan_backend_smoke.py`
+        - `tests/test_vulkan_capability_checks.py`
+        - `tests/test_vulkan_fallback_regressions.py`
+        - `tests/test_vulkan_vendor_guardrails.py`
+  - Validation status (local, 2026-04-26):
+    - Workflow YAML parse check: pass
+    - Local sanity subset: `20 passed`
+    - Local build/import path:
+      - `Set-Location C:\\Git\\rotorquant; python setup.py --vulkan build_ext --inplace` -> pass
+      - `python -c "import turboquant.vulkan_backend_ext ..."` -> pass
+  - Remaining validation:
+    - Run at least one successful GitHub Actions cycle and capture run URL/status.
 
 ## Suggested implementation order (short)
 1. Build toggle + project scaffolding

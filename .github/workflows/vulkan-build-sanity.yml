@@ -1,0 +1,56 @@
+name: Vulkan Build Sanity
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - codex/**
+  workflow_dispatch:
+
+jobs:
+  vulkan-build-sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Vulkan shader toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends glslang-tools
+          glslc --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          # Keep validation dependencies optional in packaging, but install them in CI
+          # for runtime smoke/fallback test coverage.
+          python -m pip install -r requirements-validate.txt
+
+      - name: Build Vulkan extension in-place
+        run: |
+          python setup.py --vulkan build_ext --inplace
+
+      - name: Validate extension import and compile features
+        run: |
+          python -c "import turboquant.vulkan_backend_ext as ext; print(ext.is_vulkan_runtime_available()); print(ext.vulkan_runtime_info()); print(ext.vulkan_compile_features())"
+
+      - name: Run Vulkan sanity test subset
+        run: |
+          python -m pytest \
+            tests/test_vulkan_backend_smoke.py \
+            tests/test_vulkan_capability_checks.py \
+            tests/test_vulkan_fallback_regressions.py \
+            tests/test_vulkan_vendor_guardrails.py \
+            -q
