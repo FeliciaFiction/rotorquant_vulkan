@@ -46,6 +46,10 @@ Scope: Up-to-date Vulkan backend validations, including regression coverage.
 | `Set-Location C:\\Git\\rotorquant; python -m pytest tests/test_backend_selection_policy.py tests/test_vulkan_backend_api_compat.py tests/test_vulkan_capability_checks.py tests/test_vulkan_vendor_guardrails.py tests/test_vulkan_backend_smoke.py tests/test_vulkan_fallback_regressions.py tests/test_vulkan_qjl_quant_dispatch.py tests/test_vulkan_qjl_score_dispatch.py tests/test_vulkan_qjl_gqa_score_dispatch.py tests/test_vulkan_quantized_bmm_dispatch.py tests/test_vulkan_qjl_quant_reference.py tests/test_vulkan_qjl_score_reference.py tests/test_vulkan_qjl_gqa_score_reference.py tests/test_vulkan_quantized_bmm_reference.py tests/test_vulkan_parity_matrix.py tests/test_vulkan_benchmark_thresholds.py tests/test_vulkaninfo_probe.py tests/test_vulkan_qjl_quant_native_extension.py tests/test_vulkan_qjl_score_native_extension.py tests/test_vulkan_qjl_gqa_score_native_extension.py tests/test_vulkan_quantized_bmm_native_extension.py -q` | `75 passed, 15 skipped in 2.70s` |
 | `git -C C:\\Git\\rotorquant ls-remote --heads origin codex/vulkan-1.3-plan` | No remote branch found (empty result). |
 | GitHub content check (`.github/workflows/vulkan-build-sanity.yml` on `main`) | Not found (GitHub API 404). |
+| `git -C C:\\Git\\rotorquant push -u felicia codex/vulkan-1.3-plan` | Pass. Branch pushed to `https://github.com/FeliciaFiction/rotorquant_vulkan`. |
+| GitHub Actions run poll (`/actions/runs?branch=codex/vulkan-1.3-plan`) | Run captured: `https://github.com/FeliciaFiction/rotorquant_vulkan/actions/runs/24955738180` (`Vulkan Build Sanity`, `completed`, `failure`). |
+| Job step summary (`/actions/runs/24955738180/jobs`) | Steps 4-7 passed (toolchain install, deps, build, extension validation); step 8 (`Run Vulkan sanity test subset`) failed. |
+| Check annotations (`/check-runs/73073556391/annotations`) | Generic failure only: `Process completed with exit code 1.` |
 
 ## Regression Coverage Included
 
@@ -67,4 +71,4 @@ Regression scenarios are included in the full pytest command above, including:
 - `qjl_gqa_score` CUDA parity is non-testable on this host (no CUDA toolkit/runtime configured), but the Vulkan path is functioning based on native extension parity and full-suite pass results.
 - `quantized_bmm` CUDA parity is non-testable on this host (no CUDA toolkit/runtime configured), but the Vulkan path is functioning based on native extension parity and full-suite pass results.
 - Acceptance-threshold CUDA comparisons remain blocked on this host (no CUDA toolkit/runtime), while Vulkan-vs-PyTorch thresholds pass on Intel Arc.
-- CI-cycle remote validation remains blocked by user ownership policy: no push to `github.com/scrya-com/rotorquant`, so no new GitHub Actions run can be triggered from this workspace.
+- CI-cycle remote validation is now running on user-owned repo, but the required success condition is still pending due failure in the remote `Run Vulkan sanity test subset` step.

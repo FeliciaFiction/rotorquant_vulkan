@@ -905,9 +905,26 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - Remote `main` workflow presence check for `.github/workflows/vulkan-build-sanity.yml` -> not found (404 on content fetch).
     - User constraint captured:
       - Do not push this branch to `github.com/scrya-com/rotorquant` because repository ownership is external.
+  - Progress update (2026-04-26, FeliciaFiction repo):
+    - Branch pushed to user-owned remote:
+      - `https://github.com/FeliciaFiction/rotorquant_vulkan`
+      - branch: `codex/vulkan-1.3-plan`
+    - Workflow run captured:
+      - Run URL: `https://github.com/FeliciaFiction/rotorquant_vulkan/actions/runs/24955738180`
+      - Workflow: `Vulkan Build Sanity`
+      - Status: `completed`
+      - Conclusion: `failure`
+    - Step-level status:
+      - `Install Vulkan shader toolchain`: pass
+      - `Install Python dependencies`: pass
+      - `Build Vulkan extension in-place`: pass
+      - `Validate extension import and compile features`: pass
+      - `Run Vulkan sanity test subset`: fail
+    - Additional note:
+      - GitHub check annotations show only generic failure (`Process completed with exit code 1`) and do not include test-level trace in public annotations.
   - Remaining validation:
     - Run at least one successful GitHub Actions cycle and capture run URL/status.
-    - Currently blocked by repository access/ownership policy (push disabled by user instruction), so a new Actions run cannot be triggered from this workspace.
+    - Current blocker is CI test-step failure in the remote run (not ownership/push permissions anymore).
 
 ## Suggested implementation order (short)
 1. Build toggle + project scaffolding
