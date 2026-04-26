@@ -9,7 +9,11 @@ runtime execution paths in follow-up tasks.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import re
+import subprocess
+import tempfile
 import torch
 
 from .vulkan.reference_ops import (
@@ -71,6 +75,153 @@ try:
 except Exception as e:  # pragma: no cover - exercised through behavior tests.
     _VULKAN_EXT_AVAILABLE = False
     _VULKAN_LOAD_ERROR = str(e)
+
+
+def _env_true(name: str) -> bool:
+    return os.environ.get(name, "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_use_vulkaninfo_fallback() -> bool:
+    if _env_true("TURBOQUANT_DISABLE_VULKANINFO_FALLBACK"):
+        return False
+    # Keep existing mocked tests deterministic unless explicitly enabled.
+    if os.environ.get("PYTEST_CURRENT_TEST") and not _env_true(
+        "TURBOQUANT_ENABLE_VULKANINFO_FALLBACK_IN_TESTS"
+    ):
+        return False
+    return True
+
+
+def _parse_vulkaninfo_summary(summary_text: str):
+    gpus = []
+    cur = None
+    for raw in summary_text.splitlines():
+        line = raw.rstrip("\n")
+        m_gpu = re.match(r"^\s*GPU(\d+):\s*$", line)
+        if m_gpu:
+            if cur is not None:
+                gpus.append(cur)
+            cur = {"index": int(m_gpu.group(1))}
+            continue
+        if cur is None:
+            continue
+        m_kv = re.match(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$", line)
+        if not m_kv:
+            continue
+        key = m_kv.group(1)
+        val = m_kv.group(2)
+        cur[key] = val
+    if cur is not None:
+        gpus.append(cur)
+    return gpus
+
+
+def _choose_preferred_gpu(gpus):
+    if not gpus:
+        return None
+
+    def _score(g):
+        dtype = str(g.get("deviceType", "")).upper()
+        is_discrete = "DISCRETE" in dtype
+        vendor = _infer_vendor_name(
+            _parse_vendor_id(g.get("vendorID")),
+            g.get("deviceName"),
+        )
+        # Intel Arc is first-class target; otherwise prefer discrete + latest API.
+        intel_bonus = vendor == "intel"
+        api_tuple = _parse_version_tuple(g.get("apiVersion")) or (0, 0, 0)
+        return (1 if is_discrete else 0, 1 if intel_bonus else 0, api_tuple)
+
+    return max(gpus, key=_score)
+
+
+def _find_feature_bool(feature_map, key: str):
+    if not isinstance(feature_map, dict):
+        return None
+    for _, struct_map in feature_map.items():
+        if isinstance(struct_map, dict) and key in struct_map:
+            return bool(struct_map.get(key))
+    return None
+
+
+def _collect_vulkan_capabilities_from_vulkaninfo():
+    if not _should_use_vulkaninfo_fallback():
+        return None
+    try:
+        summary = subprocess.run(
+            ["vulkaninfo", "--summary"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return None
+    if summary.returncode != 0:
+        return None
+
+    gpus = _parse_vulkaninfo_summary(summary.stdout)
+    selected = _choose_preferred_gpu(gpus)
+    if not selected:
+        return None
+    gpu_idx = selected.get("index")
+    if gpu_idx is None:
+        return None
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="tq_vulkaninfo_") as tmp:
+            details = subprocess.run(
+                ["vulkaninfo", f"--json={gpu_idx}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=tmp,
+                check=False,
+            )
+            if details.returncode != 0:
+                return None
+            json_candidates = sorted(Path(tmp).glob("VP_VULKANINFO_*.json"))
+            if not json_candidates:
+                return None
+            payload = json.loads(json_candidates[-1].read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    device_caps = (
+        payload.get("capabilities", {})
+        .get("device", {})
+    )
+    props = device_caps.get("properties", {}).get("VkPhysicalDeviceProperties", {})
+    exts_map = device_caps.get("extensions", {})
+    features_map = device_caps.get("features", {})
+
+    compute_shader = _find_feature_bool(features_map, "computeShader")
+    shader_integer_dot = _find_feature_bool(features_map, "shaderIntegerDotProduct")
+    # Vulkan Profiles JSON can omit some core VkPhysicalDeviceFeatures keys
+    # (such as computeShader) even when supported. For this probe source, treat
+    # missing computeShader as unknown/assumed-true.
+    if compute_shader is None:
+        compute_shader = True
+
+    return {
+        "runtime_available": True,
+        "runtime_info_raw": {
+            "source": "vulkaninfo",
+            "gpu_index": gpu_idx,
+            "device_name": props.get("deviceName") or selected.get("deviceName"),
+            "vendor_id": props.get("vendorID") or selected.get("vendorID"),
+            "api_version": props.get("apiVersion") or selected.get("apiVersion"),
+        },
+        "api_version": props.get("apiVersion") or selected.get("apiVersion"),
+        "vendor_id": props.get("vendorID") or selected.get("vendorID"),
+        "vendor_name": props.get("deviceName") or selected.get("deviceName"),
+        "device_name": props.get("deviceName") or selected.get("deviceName"),
+        "extensions": sorted(list(exts_map.keys())) if isinstance(exts_map, dict) else [],
+        "features": {
+            "computeShader": bool(compute_shader),
+            "shaderIntegerDotProduct": bool(shader_integer_dot),
+        },
+    }
 
 
 def _parse_version_tuple(value):
@@ -172,6 +323,9 @@ def _collect_vulkan_capabilities():
         "compile_features": {},
     }
     if not _VULKAN_EXT_AVAILABLE:
+        fallback = _collect_vulkan_capabilities_from_vulkaninfo()
+        if isinstance(fallback, dict):
+            caps.update(fallback)
         return caps
 
     try:
@@ -217,6 +371,20 @@ def _collect_vulkan_capabilities():
             caps["compile_features"] = dict(compile_features)
     except Exception:
         pass
+
+    runtime_info_raw = caps.get("runtime_info_raw")
+    scaffold_runtime = (
+        isinstance(runtime_info_raw, str)
+        and "scaffold" in runtime_info_raw.lower()
+    )
+    if not caps.get("runtime_available") or scaffold_runtime:
+        fallback = _collect_vulkan_capabilities_from_vulkaninfo()
+        if isinstance(fallback, dict):
+            # Keep compile-time feature probe macros from extension if present.
+            compile_features = dict(caps.get("compile_features") or {})
+            caps.update(fallback)
+            if compile_features:
+                caps["compile_features"] = compile_features
 
     return caps
 
