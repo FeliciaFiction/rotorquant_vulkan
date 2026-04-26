@@ -50,6 +50,8 @@ Scope: Up-to-date Vulkan backend validations, including regression coverage.
 | GitHub Actions run poll (`/actions/runs?branch=codex/vulkan-1.3-plan`) | Run captured: `https://github.com/FeliciaFiction/rotorquant_vulkan/actions/runs/24955738180` (`Vulkan Build Sanity`, `completed`, `failure`). |
 | Job step summary (`/actions/runs/24955738180/jobs`) | Steps 4-7 passed (toolchain install, deps, build, extension validation); step 8 (`Run Vulkan sanity test subset`) failed. |
 | Check annotations (`/check-runs/73073556391/annotations`) | Generic failure only: `Process completed with exit code 1.` |
+| GitHub Actions run poll (`/actions/runs/24955851213`) | Latest run after CI toolchain-fix push: `https://github.com/FeliciaFiction/rotorquant_vulkan/actions/runs/24955851213` (`completed`, `failure`). |
+| Job step summary (`/actions/runs/24955851213/jobs`) | Steps 4-7 passed; step 8 (`Run Vulkan sanity test subset`) failed again. |
 
 ## Regression Coverage Included
 

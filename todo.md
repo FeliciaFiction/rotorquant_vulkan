@@ -922,6 +922,15 @@ Add production-ready Vulkan 1.3 support to RotorQuant (with Intel Arc as a first
       - `Run Vulkan sanity test subset`: fail
     - Additional note:
       - GitHub check annotations show only generic failure (`Process completed with exit code 1`) and do not include test-level trace in public annotations.
+  - Re-validation (2026-04-26, FeliciaFiction repo):
+    - After CI workflow toolchain-fix push, latest run:
+      - Run URL: `https://github.com/FeliciaFiction/rotorquant_vulkan/actions/runs/24955851213`
+      - Workflow: `Vulkan Build Sanity`
+      - Status: `completed`
+      - Conclusion: `failure`
+    - Step-level status unchanged:
+      - steps 4-7 pass
+      - step 8 (`Run Vulkan sanity test subset`) fails
   - Remaining validation:
     - Run at least one successful GitHub Actions cycle and capture run URL/status.
     - Current blocker is CI test-step failure in the remote run (not ownership/push permissions anymore).
